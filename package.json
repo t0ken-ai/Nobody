@@ -1,0 +1,16 @@
+{
+  "name": "translateme",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc && vite build",
+    "tauri": "tauri",
+    "desktop": "tauri dev",
+    "bundle": "tauri build",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": { "@tauri-apps/api": "^2.8.0" },
+  "devDependencies": { "@tauri-apps/cli": "^2.8.0", "typescript": "~5.9.2", "vite": "^7.1.0" }
+}

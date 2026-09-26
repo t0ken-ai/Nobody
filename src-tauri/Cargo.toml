@@ -1,0 +1,40 @@
+[package]
+name = "translateme"
+version = "0.1.0"
+edition = "2021"
+description = "A selection translator for your coding workflow"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["sync", "time", "rt"] }
+regex = "1"
+uuid = { version = "1", features = ["v4"] }
+url = "2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libloading = "0.8"
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+arboard = { version = "3", default-features = false }
+keyring = { version = "3", features = ["windows-native"] }
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Accessibility", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Ole", "Win32_System_Variant"] }
+
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+native/macos/build/
+.DS_Store
+artifacts/
+*.log
+.env*
+!.env.example
