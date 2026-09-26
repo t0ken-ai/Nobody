@@ -1,6 +1,5 @@
 {
   "bundle": {
-    "macOS": { "signingIdentity": "-" },
-    "resources": { "../native/macos/build/libTranslateMeNative.dylib": "native/libTranslateMeNative.dylib" }
+    "macOS": { "signingIdentity": "-" }
   }
 }

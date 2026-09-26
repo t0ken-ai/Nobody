@@ -10,6 +10,8 @@
 
 `scripts/local-build.mjs` 只对 Swift 编译设置 `TRANSLATEME_SWIFT_DEVELOPER_DIR`。Rust 继续使用系统原有链接器，避免此机器中新版链接器与 Rust 宏动态库的兼容问题。
 
+Swift 适配层编译为静态库，由 Rust 链接进最终可执行文件；不再随包携带并通过 `dlopen` 加载独立 dylib。链接时使用编译 Swift 的同一 SDK 解析系统框架和 Swift 运行库，运行时依赖来自 macOS。这样无需关闭 hardened runtime 的 library validation，也避免本地 ad-hoc 签名缺少 Team ID 导致启动崩溃。C 回调接口与模块职责不变。
+
 已有现代 Xcode / Command Line Tools 的机器直接使用 `npm run bundle` 即可，无需下载上述包。
 
 API 参考：[Apple Translation](https://developer.apple.com/documentation/translation/)、[Tauri 2](https://v2.tauri.app/concept/architecture/)、[Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)。

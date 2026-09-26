@@ -8,7 +8,7 @@
 - `npm run build`：生产前端构建通过。
 - `cargo test --manifest-path src-tauri/Cargo.toml`：7 个测试通过，覆盖代码块、未闭合代码块、Unicode 空白、变量名、相对/绝对路径、产品名上下文、LLM 响应解析和 API 地址约束。
 - Windows 适配模块使用 `x86_64-pc-windows-gnu` 完成 `cargo check`；检查工程位于忽略目录 `artifacts/windows-check/`。
-- macOS 本地 `.app` 打包成功，约 32.5 MiB，具有 ad-hoc 签名；`codesign --verify --deep --strict` 通过。
+- 修复后的 macOS 本地 `.app` 打包成功，约 32.4 MiB，具有 ad-hoc 签名并保留 hardened runtime；`codesign --verify --deep --strict` 通过。
 - 应用界面通过原生 UI 自动化检查，工作台、语言切换和结果显示正常。
 - Apple 系统翻译首次下载了中文/英文语言包。没有使用预制译文或远程免费接口替代系统翻译。
 
@@ -38,10 +38,18 @@ let 用户 = 1;
 
 实测发现并修复：`macOS` 被当作 camelCase 标识符，导致句子被错误拆开。另补充回归测试，确保相对路径的首级目录也被保护。
 
+## 启动崩溃修复与复验
+
+用户反馈当前聊天划词和快捷键无响应。复现发现原最终打包版本启动即崩溃：hardened runtime 拒绝 `dlopen` 独立 ad-hoc 签名的 Swift dylib，错误包含 `different Team IDs`。仅 `codesign --verify` 通过不足以说明应用能够运行。
+
+修复将同一个 Swift 适配层静态链接进主程序，移除动态库加载和随包资源，未关闭 library validation。修复后通过原生 UI 工具启动最终 `.app`，界面正常显示；再次提交上面的中文样例，Apple 系统翻译真实返回了相同英文译文，应用持续运行。`otool -L` 确认没有项目本地 dylib 依赖，Translation 框架保留弱链接；7 个 Rust 测试重新通过。
+
+最终构建仍报告辅助功能权限未生效，已请用户在系统设置中刷新授权。TextEdit 测试文档中的快捷键尝试未观察到回填，因此不将跨应用能力记为验收通过。
+
 ## 尚未完成的验收
 
 - **当前 Codex 聊天的直接取词/回填**：自动化工具明确禁止操作 Codex，因此只能由用户在聊天中亲手测试。已用聊天内容验证工作台翻译，不能等同于已验证 Codex 的跨应用兼容性。
-- **最终构建的跨应用快捷键**：用户曾开启辅助功能，旧构建曾显示授权成功；重建后 macOS 没有沿用旧授权。准备固定版本实测时 Mac 被锁定，等待解锁和授权刷新。
+- **最终构建的跨应用快捷键**：用户曾开启辅助功能，旧构建曾显示授权成功；修复后的最终构建尚未沿用旧授权，等待用户刷新授权后继续验证。
 - **Windows 运行**：只完成适配模块编译检查；本机不能验证 Windows UI Automation、焦点行为、快捷键冲突和安装包。随附 CI 尚未运行。
 - **真实 LLM 服务**：接口、凭据存储和响应验证已实现；未提供服务地址、模型与 API Key，尚未进行真实服务联调。
 - **Windows 默认翻译**：尚未选定通用默认引擎，当前可配置 LLM；不会把 Apple 系统翻译标为 Windows 可用。
