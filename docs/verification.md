@@ -53,6 +53,20 @@ let 用户 = 1;
 
 自动化向 TextEdit 发送快捷键后未观察到译文或回填；工具连接中途断开一次并已恢复。这次尝试不能作为跨应用成功证据。随后用户在当前聊天输入框亲手按 `⌘⇧E`，确认“已替换成英文”，写入路径验收通过。自动划词与 `⌘⇧D` 阅读路径单独验收。
 
+## 语言包重复提示修复
+
+用户反馈每次划词都像在重新下载语言包。检查旧代码发现，每次请求都创建“正在准备系统翻译 / 首次使用可能需要下载语言包”的窗口，并无条件调用 `prepareTranslation()`；所有异常还统一追加“首次使用请等待语言包下载完成后重试”。本次读取旧版译文窗口，实际错误为 `Something went wrong. Please try again later.`，下载提示来自应用追加文字，不能据此判断系统真的再次下载了模型。
+
+修复仅涉及原生 macOS 翻译模块：每次请求通过 `LanguageAvailability` 查询语言组合；已安装且运行于 macOS 26+ 时使用 `TranslationSession(installedSource:target:)`，不创建准备窗口；缺少语言包时保留系统下载确认，旧系统保留 SwiftUI 会话。不支持的语言组合直接报错，其余异常保留真实原因；没有新增跨模块接口或存储。Apple 文档说明，[已安装或正在下载时，prepareTranslation 不会重复提示下载](https://developer.apple.com/documentation/translation/translationsession/preparetranslation())；[无界面会话只适用于已安装语言](https://developer.apple.com/documentation/translation/translationsession/init(installedsource:target:))。
+
+验证结果：
+
+- 生产前端和最终 `.app` 构建成功，原有 7 个 Rust 测试通过；最终包的 `codesign --verify --deep --strict` 通过，保留 hardened runtime。
+- 诊断程序 `artifacts/translation-repeat-check/main.swift` 直接调用生产 Swift C 桥接入口，连续执行两次中文→英文、两次英文→简体中文。其中两次为批量多段文本；四次都检查到 `installed`，都返回非空译文，整个程序没有创建窗口。诊断只使用固定测试句，不读取其他应用。
+- 在最终 `.app` 工作台连续翻译“请在请求失败时显示错误信息，并允许用户重试。”与“更新结果时，请保留现有数据。”，真实返回 `Please display an error message when the request fails and allow the user to try again.` 和 `When updating the results, please keep the existing data.`。
+- 最终构建 cdhash 为 `300e39ee8300095d8e274cea73245e78b1dd5ca3`。更新后旧开发签名授权失效，已通过系统设置移除旧 TranslateMe 项、重新添加同一路径并重启；界面确认“跨应用翻译已就绪”。未修改系统权限数据库或安全保护。
+- 尚未实测缺少语言包的下载分支及 macOS 15–25 兼容分支，未删除已安装语言包。此次构建的 Codex 划词仍需用户复试，不能把工作台验证当作跨应用端到端验证。
+
 ## 尚未完成的验收
 
 - **当前 Codex 聊天的划词阅读**：用户提供了混合说明、代码和 Git 命令的译文，出现关键字及命令被翻译的问题，尚不满足开发场景验收。用户未说明此次结果是自动划词还是 `⌘⇧D` 触发，不能据此认定两条触发路径均通过。已用生产解析器复现围栏丢失后的代码泄漏，具体证据与待确认方案见 `structured-selection-proposal.md`。写入快捷键 `⌘⇧E` 仍保留用户已验证成功的记录。

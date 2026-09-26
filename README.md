@@ -29,6 +29,8 @@
 
 Windows 版本目前使用自定义 LLM。没有添加未经确认的云端中转服务，也不会在系统翻译失败时自动把文字发到网络。目标语言是否受系统引擎支持，由 Apple Translation 在运行时检查。
 
+系统翻译每次查询实际语言包状态。使用 macOS 26+ SDK 构建并运行于 macOS 26+ 时，已安装的语言组合直接翻译，不显示准备窗口；macOS 15–25 或旧 SDK 构建保留系统要求的界面会话。只有缺少语言包时才进入准备流程，普通翻译错误不会提示重新下载。语言包由系统管理，应用不缓存一个永久有效的“已下载”标记。
+
 **LLM 设置**：填写基础地址（例如 `https://your-provider.example/v1`）、模型 ID 和 API Key。完整 `/chat/completions` 地址也可使用。本机模型支持 `http://localhost:11434/v1` 等回环地址；远程服务要求 HTTPS。密钥留空保留已存密钥，勾选删除才会移除。密钥按接口地址独立保存在 macOS Keychain / Windows Credential Manager。
 
 ## 安全回填和文本保护

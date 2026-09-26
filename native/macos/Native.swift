@@ -156,42 +156,61 @@ private func replace(_ request: [String: Any], _ reply: @escaping Reply, _ conte
 }
 
 #if canImport(Translation)
+/// Both UI-backed and installed-language sessions use the same ordering. The
+/// framework may return batch responses out of order; IDs refer to input slots.
+@available(macOS 15.0, *)
+private func translateBatch(_ texts: [String], using session: TranslationSession) async throws -> [String] {
+    let responses = try await session.translations(from: texts.enumerated().map {
+        TranslationSession.Request(sourceText: $0.element, clientIdentifier: String($0.offset))
+    })
+    var ordered = Array(repeating: "", count: texts.count)
+    for response in responses {
+        guard let id = response.clientIdentifier.flatMap(Int.init), ordered.indices.contains(id) else { continue }
+        ordered[id] = response.targetText
+    }
+    return ordered
+}
+
+/// A visible host is needed for Apple's download consent and for the legacy
+/// session API. An ordinary translation must not be described as a download.
 @available(macOS 15.0, *)
 private struct TranslationHost: View {
     let source: Locale.Language?
     let target: Locale.Language
     let texts: [String]
+    let needsPreparation: Bool
     let completion: (Result<[String], Error>) -> Void
     var body: some View {
         VStack(spacing: 12) {
             ProgressView()
-            Text("正在准备系统翻译").font(.headline)
-            Text("首次使用时，macOS 可能需要下载语言包。")
+            Text(needsPreparation ? "正在准备所需语言" : "正在翻译…").font(.headline)
+            Text(needsPreparation ? "缺少对应语言包，请在系统提示中确认下载。" : "系统会在需要时提示确认语言。")
                 .font(.caption).foregroundStyle(.secondary)
         }.padding(24).frame(width: 320, height: 130)
         .translationTask(source: source, target: target) { session in
             do {
-                // Prepare uses Apple's own download consent UI; it is never
-                // replaced by an implicit network fallback to an LLM provider.
-                try await session.prepareTranslation()
-                let responses = try await session.translations(from: texts.enumerated().map {
-                    TranslationSession.Request(sourceText: $0.element, clientIdentifier: String($0.offset))
-                })
-                var ordered = Array(repeating: "", count: texts.count)
-                for response in responses {
-                    guard let id = response.clientIdentifier.flatMap(Int.init), ordered.indices.contains(id) else { continue }
-                    ordered[id] = response.targetText
+                // Only request preparation for a known, missing language pair.
+                // With a nil source, prepareTranslation cannot identify a
+                // language; translating the real text lets Apple identify it.
+                if needsPreparation {
+                    try await session.prepareTranslation()
                 }
-                completion(.success(ordered))
+                completion(.success(try await translateBatch(texts, using: session)))
             } catch { completion(.failure(error)) }
         }
     }
 }
 private var translationPanel: NSPanel?
+// Main-queue state covers both visible and headless requests. A nil panel no
+// longer implies idle when installed-language translation runs without UI.
+private var translationInProgress = false
 
+/// Query the current language installation state on every request: macOS may
+/// remove downloaded models. macOS 26+ can translate installed pairs without a
+/// SwiftUI panel; missing pairs retain Apple's standard download consent flow.
 @available(macOS 15.0, *)
 private func translate(_ request: [String: Any], _ reply: @escaping Reply, _ context: UnsafeMutableRawPointer?) {
-    guard translationPanel == nil else { respond(["error": "系统翻译正在运行，请稍后再试。"], reply, context); return }
+    guard !translationInProgress else { respond(["error": "系统翻译正在运行，请稍后再试。"], reply, context); return }
     let texts = request["texts"] as? [String] ?? []
     let code = request["target"] as? String ?? "en"
     let recognizer = NLLanguageRecognizer()
@@ -206,26 +225,54 @@ private func translate(_ request: [String: Any], _ reply: @escaping Reply, _ con
         } else { respond(["texts": texts], reply, context) }
         return
     }
-    let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 368, height: 178), styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
-    panel.title = "TranslateMe · Apple 翻译"
-    panel.level = .floating
-    panel.isReleasedWhenClosed = false
-    let content = TranslationHost(source: source, target: target, texts: texts) { result in
+    translationInProgress = true
+    let finish: (Result<[String], Error>) -> Void = { result in
         DispatchQueue.main.async {
             translationPanel?.orderOut(nil)
             translationPanel = nil
+            translationInProgress = false
             switch result {
             case .success(let translated): respond(["texts": translated], reply, context)
             case .failure(let error):
                 let detail = (error as? LocalizedError)?.failureReason ?? error.localizedDescription
-                respond(["error": "系统翻译失败：\(detail)。首次使用请等待语言包下载完成后重试。"], reply, context)
+                // Network, unsupported language and cancellation errors are not
+                // all download failures; preserve the actual framework reason.
+                respond(["error": "系统翻译失败：\(detail)"], reply, context)
             }
         }
     }
-    panel.contentView = NSHostingView(rootView: content)
-    panel.center()
-    translationPanel = panel
-    panel.orderFrontRegardless()
+    Task { @MainActor in
+        var needsPreparation = false
+        if let source {
+            let status = await LanguageAvailability().status(from: source, to: target)
+            if status == .unsupported {
+                finish(.failure(NSError(domain: "TranslateMe.Translation", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "系统不支持当前语言组合，请切换 LLM。"])))
+                return
+            }
+            needsPreparation = status == .supported
+            // Xcode 26 / Swift 6.2 introduced the headless initializer. Older
+            // Apple toolchains keep compiling the macOS 15 UI-backed path.
+            #if compiler(>=6.2)
+            if #available(macOS 26.0, *), status == .installed {
+                do {
+                    let session = TranslationSession(installedSource: source, target: target)
+                    finish(.success(try await translateBatch(texts, using: session)))
+                } catch { finish(.failure(error)) }
+                return
+            }
+            #endif
+        }
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 368, height: 178), styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.title = "TranslateMe · Apple 翻译"
+        panel.level = .floating
+        panel.isReleasedWhenClosed = false
+        panel.contentView = NSHostingView(rootView: TranslationHost(source: source, target: target,
+            texts: texts, needsPreparation: needsPreparation, completion: finish))
+        panel.center()
+        translationPanel = panel
+        panel.orderFrontRegardless()
+    }
 }
 #endif
 
