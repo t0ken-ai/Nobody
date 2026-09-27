@@ -98,6 +98,7 @@ let demos: ReturnType<typeof mountDemos> | undefined;
 const shortcutRecorders: ReturnType<typeof mountShortcutRecorder>[] = [];
 let transfer: ReturnType<typeof mountTransfer> | undefined;
 let setMainVisible: (visible: boolean) => void = () => {};
+let openTransferPage: () => void = () => {};
 let popupResizeFrame = 0;
 
 /** Measure content, not the current window height, to avoid a resize feedback
@@ -233,6 +234,7 @@ if (popup) {
     notice("");
   }
   transfer = mountTransfer($("transfer"), () => navigate("transfer"));
+  openTransferPage = () => navigate("transfer");
   $("nav-transfer").onclick = () => navigate("transfer");
   $("nav-demos").onclick = () => navigate("demos");
   $("nav-workbench").onclick = () => navigate("workbench");
@@ -658,6 +660,18 @@ if (isTauri()) {
     if (result) display(result);
   } else {
     await listen<boolean>("main-window-visible", event => setMainVisible(event.payload));
+    /** Listen before consuming so a tray click during startup cannot be lost.
+     * Native consumption coalesces repeated clicks; navigation keeps drafts and
+     * uses the same visibility gating as the sidebar and pairing requests. */
+    const consumeTransferMenuRequest = async () => {
+      try {
+        if (await call<boolean>("take_transfer_menu_request")) openTransferPage();
+      } catch (error) {
+        notice(String(error), true);
+      }
+    };
+    await listen("open-transfer", () => { void consumeTransferMenuRequest(); });
+    await consumeTransferMenuRequest();
     await refresh();
     window.addEventListener("focus", () => {
       void refresh(false);

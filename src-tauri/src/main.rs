@@ -34,6 +34,9 @@ struct AppState {
     generation: AtomicU64,
     last: Mutex<Option<TranslationResult>>,
     popover: Mutex<popover::Popover>,
+    // Keep an early tray click until the main webview has installed its listener.
+    // Repeated clicks coalesce into one navigation; this is never persisted.
+    transfer_menu_pending: AtomicBool,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,6 +75,24 @@ async fn get_settings(state: tauri::State<'_, AppState>) -> Result<Value, String
     status["settings"] = serde_json::to_value(settings).map_err(|e| e.to_string())?;
     status["defaultLlmPrompt"] = json!(config::DEFAULT_LLM_PROMPT);
     Ok(status)
+}
+
+/// Consume a tray navigation once, including clicks during frontend startup.
+/// The translation popover must not consume the main window's pending request.
+#[tauri::command]
+fn take_transfer_menu_request(window: tauri::WebviewWindow, state: tauri::State<'_, AppState>) -> bool {
+    window.label() == "main" && state.transfer_menu_pending.swap(false, Ordering::SeqCst)
+}
+
+/// Restore the resident window without reloading its drafts. Explicit visibility
+/// resumes paused page refreshes even when the OS emits no new focus event.
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        let _ = window.emit("main-window-visible", true);
+    }
 }
 
 /// Exercise the unsaved LLM draft through the production request/validation
@@ -612,6 +633,7 @@ fn main() {
                 generation: AtomicU64::new(0),
                 last: Mutex::new(None),
                 popover: Mutex::new(popover::Popover::default()),
+                transfer_menu_pending: AtomicBool::new(false),
             });
             let (write, read) = parse_shortcuts(&settings).map_err(std::io::Error::other)?;
             app.global_shortcut().register_multiple([write, read])?;
@@ -622,8 +644,15 @@ fn main() {
                 true,
                 None::<&str>,
             )?;
+            let open_transfer = tauri::menu::MenuItem::with_id(
+                app,
+                "open-transfer",
+                "局域网互传",
+                true,
+                None::<&str>,
+            )?;
             let quit = tauri::menu::MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = tauri::menu::Menu::with_items(app, &[&open, &quit])?;
+            let menu = tauri::menu::Menu::with_items(app, &[&open, &open_transfer, &quit])?;
             let tray = tauri::tray::TrayIconBuilder::with_id("main-tray");
             // macOS tints this alpha-only B mark for light/dark menu bars.
             // Its wider head gap is intentional at status-item size. Windows
@@ -638,11 +667,17 @@ fn main() {
                 .tooltip("Nobody · 写英文，读母语")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "open" => {
+                    "open" => show_main_window(app),
+                    "open-transfer" => {
+                        // Events alone can be lost before JS is ready. Store
+                        // first, then notify only the existing main webview.
+                        app.state::<AppState>()
+                            .transfer_menu_pending
+                            .store(true, Ordering::SeqCst);
                         if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
+                            let _ = window.emit("open-transfer", ());
                         }
+                        show_main_window(app);
                     }
                     "quit" => app.exit(0),
                     _ => {}
@@ -707,6 +742,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
+            take_transfer_menu_request,
             save_settings,
             test_llm_connection,
             pick_applications,
