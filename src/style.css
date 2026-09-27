@@ -78,8 +78,6 @@ h1 { font-weight: 550; font-size: 32px; letter-spacing: -1.5px; margin: 7px 0 8p
 h1 > span { color: #85aa86; }
 p { margin: 0; }
 .subtitle { color: #8b9690; font-size: 12px; }
-.demo-badge { display: flex; align-items: center; gap: 7px; font-size: 10px; color: #819187; background: #ffffff90; padding: 6px 10px; border: 1px solid #e1e8e0; border-radius: 20px; }
-.demo-badge > span { width: 5px; height: 5px; background: #92ad8c; border-radius: 50%; }
 .permission-banner { display: flex; align-items: center; gap: 10px; padding: 14px 2px 0; margin-top: 10px; border-top: 1px solid #dfe6dc; }
 .connection-dot { width: 6px; height: 6px; border-radius: 50%; background: #b69152; flex-shrink: 0; }
 .permission-banner strong { color: #8a7956; font-weight: 500; font-size: 10px; }
@@ -612,7 +610,6 @@ body.popup {
   .brand { font-size: 14px; }
   .nav-item { padding-inline: 9px; }
   .page-content { padding: 22px 16px; }
-  .demo-badge { display: none; }
   .editor-pane + .editor-pane { border-left: 0; border-top: 1px solid var(--line); }
   .field-row { flex-direction: column; gap: 0; }
 }
@@ -661,7 +658,6 @@ body.popup {
   .eyebrow { color: #a8c8b4; }
   h1 { color: #e4eee7; }
   h1 > span { color: #98c7a8; }
-  .demo-badge { background: #24372a; border-color: #405548; color: #b8cfbf; }
   .permission-banner { border-color: var(--line); }
   .permission-banner strong { color: #e2c690; }
   .permission-banner.ready strong { color: #a9d8b9; }

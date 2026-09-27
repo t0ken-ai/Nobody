@@ -154,12 +154,12 @@ if (popup) {
       <header class="topbar"><div class="brand"><span class="brand-symbol">${icon("translate")}</span><span>TranslateMe<span class="brand-divider">/</span><small>语言之间，思路不断</small></span></div><nav aria-label="主导航"><button id="nav-demos" class="nav-item active" aria-current="page">使用演示</button><button id="nav-workbench" class="nav-item">翻译工作台</button><button id="nav-transfer" class="nav-item">局域网互传</button><button id="nav-settings" class="nav-item" aria-label="偏好设置">${icon("settings")}</button></nav></header>
       <div class="page-content">
         <section id="demos">
-          <div class="heading-row"><div><div class="eyebrow"><span></span> THINK IN YOUR LANGUAGE</div><h1>想法，不必绕远路<span>。</span></h1><p class="subtitle">写下你想说的，读懂你想看的。</p></div><span class="demo-badge"><span></span>交互演示</span></div>
+          <div class="heading-row"><div><div class="eyebrow"><span></span> THINK IN YOUR LANGUAGE</div><h1>想法，不必绕远路<span>。</span></h1><p class="subtitle">写下你想说的，读懂你想看的。</p></div></div>
           <div class="demo-grid">${demoMarkup()}</div>
           <div class="demo-footnote"><span>固定样例 · 自动划词默认仅限 ChatGPT Desktop / Claude Desktop</span><button id="try-workbench" class="text-button">去翻译一段 ${icon("arrow")}</button></div>
         </section>
         <section id="workbench" hidden>
-          <div class="heading-row"><div><div class="eyebrow">A SPACE FOR YOUR WORDS</div><h1>让想法，跨过语言。</h1><p class="subtitle">粘贴一段文字，在这里完成翻译。</p></div></div>
+          <div class="heading-row"><div><div class="eyebrow">A SPACE FOR YOUR WORDS</div><h1>让想法，跨过语言。</h1></div></div>
           <div class="editor-toolbar"><div><span class="section-title">试译一段</span><button id="sample" class="text-button">使用当前聊天示例 ↗</button></div><span id="engine-badge" class="engine-badge">Apple 系统翻译</span></div>
           <div class="translation-grid">
             <section class="editor-pane"><header><span>自动识别语言</span><span class="muted">原文</span></header><textarea id="source" aria-label="原文" spellcheck="false" placeholder="在这里输入，或直接在其他应用中使用快捷键…"></textarea><footer><span id="count">0 / 16,000</span><button id="clear" class="text-button">清空</button></footer></section>

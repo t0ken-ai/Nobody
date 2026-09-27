@@ -23,6 +23,15 @@ const finished = (r: RecordItem) => ["completed", "failed", "cancelled"].include
 // and active jobs. Five compact previews keep the desktop page easy to scan.
 const recordsPerPage = 5;
 
+/** Map the peer's advertised OS to local decorative SVG, never its device name.
+ * Unknown labels use a neutral computer; peer data cannot inject icon markup.
+ * The adjacent platform text remains the accessible label in both themes. */
+function platformIcon(platform: string) {
+  if (platform === "macOS") return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-platform-icon="macos"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.58 7.59 9.12 7.31c1.35.07 2.29.77 3.08.83 1.18-.24 2.31-.96 3.57-.87 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.61 4.09l.01-.01ZM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.3 2.58-2.34 4.5-3.74 4.25Z"/></svg>`;
+  if (platform === "Windows") return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-platform-icon="windows"><path d="M3 3h8v8H3zm10 0h8v8h-8zM3 13h8v8H3zm10 0h8v8h-8z"/></svg>`;
+  return `<svg class="lan-os-generic" viewBox="0 0 24 24" aria-hidden="true" focusable="false" data-platform-icon="unknown"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M12 16v5m-4 0h8"/></svg>`;
+}
+
 /** Static markup uses native form controls; peer-provided values are escaped
  * only at the rendering boundary and never treated as HTML, URLs or commands. */
 export function transferMarkup() {
@@ -87,11 +96,12 @@ export function mountTransfer(root: HTMLElement, showPage: () => void) {
     $("lan-files").innerHTML = files.map((f, index) => `<li><span class="lan-file-symbol" aria-hidden="true">↗</span><span class="lan-file-name">${esc(f.name)}</span><small>${size(f.size)}</small><button class="icon-button" data-lan-remove="${index}" aria-label="移除 ${esc(f.name)}">×</button></li>`).join("");
     composeState();
   }
-  /** Keep offline trusted peers manageable; selection is keyed by identity, not name. */
+  /** Keep offline trusted peers manageable; selection is keyed by identity, not
+   * name. OS icons reflect metadata only and never grant identity or trust. */
   function renderPeers() {
     if (!current) return;
     $("lan-count").textContent = `${current.peers.filter(p => p.online).length} 在线`;
-    $("lan-peers").innerHTML = current.peers.length ? current.peers.map(p => `<div class="lan-peer ${selected === p.id ? "selected" : ""} ${p.online ? "" : "offline"}"><button class="lan-peer-select" data-lan-peer="${esc(p.id)}" aria-pressed="${selected === p.id}" title="设备标识 ${esc(p.id.slice(0, 12))}"><span class="lan-device-icon" aria-hidden="true">▱</span><span><strong>${esc(p.name)}</strong><small>${esc(p.platform)} · ${p.online ? "在线" : "离线"} · ${p.trusted ? "已信任" : "待信任"}</small></span><i aria-hidden="true"></i></button>${p.trusted ? `<div class="lan-peer-actions"><button class="lan-forget button small" data-lan-forget="${esc(p.id)}" title="后续连接需重新确认信任">解除信任</button></div>` : ""}</div>`).join("") : `<div class="lan-empty"><span aria-hidden="true">⌁</span><strong>${current.settings.enabled ? "正在寻找附近电脑" : "互传已关闭"}</strong><p>${current.settings.enabled ? "在另一台电脑打开 TranslateMe" : "在下方设置中开启互传"}</p></div>`;
+    $("lan-peers").innerHTML = current.peers.length ? current.peers.map(p => `<div class="lan-peer ${selected === p.id ? "selected" : ""} ${p.online ? "" : "offline"}"><button class="lan-peer-select" data-lan-peer="${esc(p.id)}" aria-pressed="${selected === p.id}" title="设备标识 ${esc(p.id.slice(0, 12))}"><span class="lan-device-icon" aria-hidden="true">${platformIcon(p.platform)}</span><span><strong>${esc(p.name)}</strong><small>${esc(p.platform)} · ${p.online ? "在线" : "离线"} · ${p.trusted ? "已信任" : "待信任"}</small></span><i aria-hidden="true"></i></button>${p.trusted ? `<div class="lan-peer-actions"><button class="lan-forget button small" data-lan-forget="${esc(p.id)}" title="后续连接需重新确认信任">解除信任</button></div>` : ""}</div>`).join("") : `<div class="lan-empty"><span aria-hidden="true">⌁</span><strong>${current.settings.enabled ? "正在寻找附近电脑" : "互传已关闭"}</strong><p>${current.settings.enabled ? "在另一台电脑打开 TranslateMe" : "在下方设置中开启互传"}</p></div>`;
     composeState();
   }
   /** Paginate after filtering, preserving the page during live progress updates.

@@ -15,7 +15,11 @@
 .lan-peer { border:1px solid transparent; border-radius:10px; background:var(--lan-inset); }
 .lan-peer.selected { border-color:var(--accent); background:var(--lan-soft); }
 .lan-peer-select { display:flex; width:100%; align-items:center; gap:10px; border:0; text-align:left; background:transparent; padding:12px 10px; color:var(--lan-text); }
-.lan-device-icon { font-size:31px; width:34px; text-align:center; line-height:1; color:var(--lan-secondary); }
+/* Local SVG avoids missing OS-logo glyphs on the other platform and inherits
+   theme contrast. A fixed slot keeps device names aligned across systems. */
+.lan-device-icon { display:grid; place-items:center; width:34px; height:32px; flex-shrink:0; color:var(--lan-secondary); }
+.lan-device-icon svg { width:24px; height:24px; fill:currentColor; stroke:none; }
+.lan-device-icon .lan-os-generic { fill:none; stroke:currentColor; stroke-width:1.6; }
 .lan-peer-select > span:nth-child(2) { min-width:0; flex:1; }
 .lan-peer-select strong { display:block; font-size:12px; overflow-wrap:anywhere; font-weight:550; }
 .lan-peer-select small { display:block; margin-top:3px; font-size:9px; color:var(--lan-secondary); }
