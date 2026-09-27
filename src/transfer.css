@@ -51,6 +51,15 @@
 .lan-send-row { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:15px; }
 .lan-send-row .field-help { margin:0; font-size:9px; }
 .lan-send-row > div { display:flex; gap:16px; align-items:center; }
+/* Style only the compose footer: settings reuse lan-send-row. The fixed badge
+   remains visible beside file totals, with wrapping before the send button. */
+.lan-compose > .lan-send-row { border-top:1px solid var(--lan-border); padding-top:14px; }
+.lan-delivery-meta { display:flex; align-items:center; flex-wrap:wrap; gap:7px 10px; min-width:0; }
+.lan-security-badge { display:inline-flex; align-items:center; gap:7px; padding:5px 10px 5px 5px; border:1px solid var(--lan-border); border-radius:10px; background:linear-gradient(125deg,var(--lan-soft),var(--lan-inset)); color:var(--accent); font-size:10px; font-weight:500; white-space:nowrap; }
+.lan-security-icon { display:grid; place-items:center; width:23px; height:23px; border-radius:6px; background:var(--lan-surface); }
+.lan-security-icon svg { width:15px; height:15px; stroke-width:1.7; }
+.lan-send-summary { font-size:9px; color:var(--lan-secondary); white-space:nowrap; }
+.lan-compose > .lan-send-row > .button { flex-shrink:0; }
 .lan-preferences { border:1px solid var(--lan-border); border-radius:10px; margin-top:18px; background:var(--lan-surface); }
 .lan-preferences summary { padding:13px 18px; font-size:11px; cursor:pointer; color:var(--lan-text); }
 .lan-preferences summary > span { float:right; font-size:10px; color:var(--lan-secondary); }

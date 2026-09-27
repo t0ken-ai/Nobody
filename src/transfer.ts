@@ -43,7 +43,7 @@ export function transferMarkup() {
       <label class="sr-only" for="lan-text">要发送的文字</label><textarea id="lan-text" spellcheck="false" placeholder="粘贴文字、代码片段或报错日志…"></textarea>
       <button id="lan-add-files" type="button" class="lan-drop"><span class="lan-drop-icon" aria-hidden="true">＋</span><span><strong>添加或拖入文件</strong><small>可多选，不含文件夹</small></span></button>
       <ul id="lan-files" class="lan-file-list" aria-label="待发送文件"></ul>
-      <div class="lan-send-row"><span id="lan-send-info" class="field-help">加密直传</span><button id="lan-send" class="button primary" disabled>发送 <span aria-hidden="true">↗</span></button></div>
+      <div class="lan-send-row"><span class="lan-delivery-meta"><span class="lan-security-badge" title="通过局域网直接发送，不经云端中转"><span class="lan-security-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></svg></span><span>加密直传</span></span><span id="lan-send-info" class="lan-send-summary" hidden></span></span><button id="lan-send" class="button primary" disabled>发送 <span aria-hidden="true">↗</span></button></div>
     </div></div>
   <details class="lan-preferences"><summary>本机与接收设置 <span id="lan-self-name"></span></summary><div class="lan-settings-body"><div class="field-row"><label class="field">这台电脑的名称<input id="lan-name" maxlength="80" autocomplete="off" /></label><label class="field">局域网互传<span class="switch-row"><input id="lan-enabled" type="checkbox" /><span>允许发现并接收已信任设备的内容</span></span></label></div><div class="lan-directory"><div><span class="field-help">文件接收目录</span><p id="lan-directory-path"></p></div><button id="lan-directory" class="button small" type="button">选择目录</button></div><div class="lan-send-row"><span id="lan-fingerprint" class="field-help"></span><div><button id="lan-retry" class="text-button" type="button">重新连接</button><button id="lan-save" class="button small" type="button">保存设置</button></div></div></div></details>
   <div class="lan-inbox-heading"><h2>传输记录 <span id="lan-record-count" class="lan-record-count"></span></h2><div class="lan-record-actions"><div class="lan-tabs" role="group" aria-label="记录方向"><button data-lan-filter="all" class="active" aria-pressed="true">全部</button><button data-lan-filter="received" aria-pressed="false">收到</button><button data-lan-filter="sent" aria-pressed="false">发出</button></div><nav id="lan-pagination" class="lan-pagination" aria-label="传输记录分页" hidden><button id="lan-prev" class="button small" aria-label="上一页" aria-controls="lan-records">‹</button><span id="lan-page-info" role="status"></span><button id="lan-next" class="button small" aria-label="下一页" aria-controls="lan-records">›</button></nav><button id="lan-clear" class="button small" title="清除已结束的记录，不删除文件" aria-label="清除已结束记录">清理记录</button></div></div><div id="lan-records" class="lan-records"></div>
@@ -80,7 +80,9 @@ export function mountTransfer(root: HTMLElement, showPage: () => void) {
     if (!isTauri()) return Promise.reject(new Error("请打开桌面应用使用局域网互传。"));
     return invoke<T>(name, args);
   };
-  /** Gate duplicate sends while a draft is active, preserving edits for a later send. */
+  /** Gate duplicate sends while a draft is active, preserving edits for a later
+   * send. Update file totals separately so choosing files never replaces the
+   * encryption badge; it describes transport, not the draft's current status. */
   function composeState() {
     const peer = current?.peers.find(p => p.id === selected);
     $("lan-destination").textContent = peer?.name ?? "一台电脑";
@@ -89,7 +91,8 @@ export function mountTransfer(root: HTMLElement, showPage: () => void) {
     $<HTMLButtonElement>("lan-send").disabled = sending || !!pending || current?.status !== "running" || !peer?.online || (!input.value && !files.length);
     $<HTMLButtonElement>("lan-add-files").disabled = sending || !isTauri();
     input.disabled = sending;
-    $("lan-send-info").textContent = files.length ? `${files.length} 个文件 · ${size(files.reduce((n, f) => n + f.size, 0))}` : "加密直传";
+    $("lan-send-info").textContent = files.length ? `${files.length} 个文件 · ${size(files.reduce((n, f) => n + f.size, 0))}` : "";
+    $("lan-send-info").hidden = files.length === 0;
   }
   /** Render metadata only; Rust opens the selected file at actual send time. */
   function renderFiles() {
