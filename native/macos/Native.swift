@@ -752,6 +752,40 @@ private func replace(_ request: [String: Any], _ reply: @escaping Reply, _ conte
 }
 
 #if canImport(Translation)
+/// Match the language objects advertised by Translation, instead of mixing NL's
+/// bare identifiers with regional defaults. Preserve script distinctions (notably
+/// Hans/Hant); source/target reversal must resolve to the same installed assets.
+private func canonicalTranslationLanguage(_ language: Locale.Language, supported: [Locale.Language]) -> Locale.Language? {
+    let matches = supported.filter { $0.languageCode == language.languageCode && $0.script == language.script }
+    // The supported list can put British English first. Prefer the requested
+    // (including inferred) region, or bare "en" would switch an installed US
+    // model to a missing UK model and create exactly the redundant download.
+    return matches.first { $0.maximalIdentifier == language.maximalIdentifier } ?? matches.first
+}
+
+/// A language detector always has a top guess, even for "Error" or "git status".
+/// Confidence plus runner-up separation is required before that guess can cause
+/// a download. These conservative thresholds gate downloads only: installed
+/// languages remain usable for short selections without additional prompts.
+private func canRequestTranslationDownload(_ hypotheses: [NLLanguage: Double]) -> Bool {
+    let scores = hypotheses.values.sorted(by: >)
+    guard let first = scores.first else { return false }
+    return first >= 0.80 && first - (scores.dropFirst().first ?? 0) >= 0.20
+}
+
+/// Re-query the OS for each request, including after relaunch. The reverse pair
+/// is evidence that the same two language assets are installed; direction is
+/// not a second download. Never persist a "downloaded" flag that could become
+/// stale after macOS/user removal. An unsupported forward pair stays unsupported.
+@available(macOS 15.0, *)
+private func translationPairStatus(source: Locale.Language, target: Locale.Language,
+    lookup: (Locale.Language, Locale.Language) async -> LanguageAvailability.Status) async -> LanguageAvailability.Status {
+    let forward = await lookup(source, target)
+    guard forward == .supported else { return forward }
+    let reverse = await lookup(target, source)
+    return reverse == .installed ? .installed : forward
+}
+
 /// Both UI-backed and installed-language sessions use the same ordering. The
 /// framework may return batch responses out of order; IDs refer to input slots.
 @available(macOS 15.0, *)
@@ -771,26 +805,26 @@ private func translateBatch(_ texts: [String], using session: TranslationSession
 /// session API. An ordinary translation must not be described as a download.
 @available(macOS 15.0, *)
 private struct TranslationHost: View {
-    let source: Locale.Language?
-    let target: Locale.Language
+    let configuration: TranslationSession.Configuration
     let texts: [String]
     let needsPreparation: Bool
+    let begin: () -> Bool
     let completion: (Result<[String], Error>) -> Void
     var body: some View {
         VStack(spacing: 12) {
             ProgressView()
             Text(needsPreparation ? "正在准备所需语言" : "正在翻译…").font(.headline)
-            Text(needsPreparation ? "缺少对应语言包，请在系统提示中确认下载。" : "系统会在需要时提示确认语言。")
+            Text(needsPreparation ? "首次使用这组语言，请在系统提示中确认下载。双向翻译共用语言包。" : "正在使用已安装的语言包。")
                 .font(.caption).foregroundStyle(.secondary)
         }.padding(24).frame(width: 320, height: 130)
-        .translationTask(source: source, target: target) { session in
+        .translationTask(configuration) { session in
+            // SwiftUI can restart a task when its host changes. One native
+            // request owns one translation/download flow and one FFI callback.
+            guard begin() else { return }
             do {
-                // Only request preparation for a known, missing language pair.
-                // With a nil source, prepareTranslation cannot identify a
-                // language; translating the real text lets Apple identify it.
-                if needsPreparation {
-                    try await session.prepareTranslation()
-                }
+                // Translation itself requests missing assets and waits for the
+                // download. A separate prepareTranslation followed by translate
+                // creates two entry points into Apple's consent/download UI.
                 completion(.success(try await translateBatch(texts, using: session)))
             } catch { completion(.failure(error)) }
         }
@@ -801,9 +835,9 @@ private var translationPanel: NSPanel?
 // longer implies idle when installed-language translation runs without UI.
 private var translationInProgress = false
 
-/// Query the current language installation state on every request: macOS may
-/// remove downloaded models. macOS 26+ can translate installed pairs without a
-/// SwiftUI panel; missing pairs retain Apple's standard download consent flow.
+/// Resolve a stable language pair and its installed state before showing any
+/// download UI. macOS 26+ installed sessions cannot request downloads; failures
+/// are reported without retrying through a second, consent-capable session.
 @available(macOS 15.0, *)
 private func translate(_ request: [String: Any], _ reply: @escaping Reply, _ context: UnsafeMutableRawPointer?) {
     guard !translationInProgress else { respond(["error": "系统翻译正在运行，请稍后再试。"], reply, context); return }
@@ -811,19 +845,19 @@ private func translate(_ request: [String: Any], _ reply: @escaping Reply, _ con
     let code = request["target"] as? String ?? "en"
     let recognizer = NLLanguageRecognizer()
     recognizer.processString(texts.joined(separator: "\n"))
-    let source = recognizer.dominantLanguage.map { Locale.Language(identifier: $0.rawValue) }
-    let target = Locale.Language(identifier: code)
-    if source?.languageCode == target.languageCode {
-        // Simplified and Traditional Chinese share a language code. Do not
-        // silently claim conversion when Apple disallows same-language pairs.
-        if source?.script != target.script {
-            respond(["error": "系统翻译不支持同一语言的书写系统转换，请切换 LLM。"], reply, context)
-        } else { respond(["texts": texts], reply, context) }
+    let hypotheses = recognizer.languageHypotheses(withMaximum: 2)
+    guard let detected = recognizer.dominantLanguage else {
+        respond(["error": "无法确定选中文字的语言，请选择完整句子或切换 LLM；未请求下载语言包。"], reply, context)
         return
     }
     translationInProgress = true
+    var finished = false
     let finish: (Result<[String], Error>) -> Void = { result in
         DispatchQueue.main.async {
+            // Duplicate completion would free Rust's callback context twice.
+            // Protect both the download lifecycle and the existing FFI contract.
+            guard !finished else { return }
+            finished = true
             translationPanel?.orderOut(nil)
             translationPanel = nil
             translationInProgress = false
@@ -838,33 +872,68 @@ private func translate(_ request: [String: Any], _ reply: @escaping Reply, _ con
         }
     }
     Task { @MainActor in
-        var needsPreparation = false
-        if let source {
-            let status = await LanguageAvailability().status(from: source, to: target)
-            if status == .unsupported {
-                finish(.failure(NSError(domain: "Nobody.Translation", code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "系统不支持当前语言组合，请切换 LLM。"])))
-                return
-            }
-            needsPreparation = status == .supported
-            // Xcode 26 / Swift 6.2 introduced the headless initializer. Older
-            // Apple toolchains keep compiling the macOS 15 UI-backed path.
-            #if compiler(>=6.2)
-            if #available(macOS 26.0, *), status == .installed {
-                do {
-                    let session = TranslationSession(installedSource: source, target: target)
-                    finish(.success(try await translateBatch(texts, using: session)))
-                } catch { finish(.failure(error)) }
-                return
-            }
-            #endif
+        let availability = LanguageAvailability()
+        let supported = await availability.supportedLanguages
+        guard let source = canonicalTranslationLanguage(Locale.Language(identifier: detected.rawValue), supported: supported),
+              let target = canonicalTranslationLanguage(Locale.Language(identifier: code), supported: supported) else {
+            finish(.failure(NSError(domain: "Nobody.Translation", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "系统不支持当前语言，请选择完整句子或切换 LLM。"])))
+            return
         }
+        if source.languageCode == target.languageCode {
+            // Simplified and Traditional Chinese share a language code. Do not
+            // silently claim conversion when Apple disallows same-language pairs.
+            if source.script != target.script {
+                finish(.failure(NSError(domain: "Nobody.Translation", code: 2,
+                    userInfo: [NSLocalizedDescriptionKey: "系统翻译不支持同一语言的书写系统转换，请切换 LLM。"])))
+            } else { finish(.success(texts)) }
+            return
+        }
+        let status = await translationPairStatus(source: source, target: target) {
+            await availability.status(from: $0, to: $1)
+        }
+        guard status != .unsupported else {
+            finish(.failure(NSError(domain: "Nobody.Translation", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "系统不支持当前语言组合，请切换 LLM。"])))
+            return
+        }
+        let needsPreparation = status != .installed
+        // Availability can lag behind a completed download. Probe a session
+        // that cannot request downloads before deciding to open a consent host.
+        // If the OS claims installed but the assets are unavailable, report the
+        // actual error rather than automatically starting another download flow.
+        #if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            let session = TranslationSession(installedSource: source, target: target)
+            let ready = await session.isReady
+            Logger(subsystem: "app.translateme.desktop", category: "translation-models").debug("source=\(source.minimalIdentifier, privacy: .public) target=\(target.minimalIdentifier, privacy: .public) installed=\(!needsPreparation) ready=\(ready) canDownload=false")
+            if !needsPreparation || ready {
+                do { finish(.success(try await translateBatch(texts, using: session))) }
+                catch { finish(.failure(error)) }
+                return
+            }
+        }
+        #endif
+        guard !needsPreparation || canRequestTranslationDownload(hypotheses) else {
+            finish(.failure(NSError(domain: "Nobody.Translation", code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "选中文字的语种不明确，已避免下载可能用不到的语言包。请选择完整句子或切换 LLM。"])))
+            return
+        }
+        // Debug metadata only: no original/translated text or persistent history.
+        Logger(subsystem: "app.translateme.desktop", category: "translation-models").debug("source=\(source.minimalIdentifier, privacy: .public) target=\(target.minimalIdentifier, privacy: .public) installed=\(!needsPreparation)")
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 368, height: 178), styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.title = "Nobody · Apple 翻译"
         panel.level = .floating
         panel.isReleasedWhenClosed = false
-        panel.contentView = NSHostingView(rootView: TranslationHost(source: source, target: target,
-            texts: texts, needsPreparation: needsPreparation, completion: finish))
+        // Keep the one-shot flag in the native request, not the SwiftUI view:
+        // rebuilding a host must not reset it and restart an in-flight download.
+        var hostStarted = false
+        panel.contentView = NSHostingView(rootView: TranslationHost(configuration: .init(source: source, target: target),
+            texts: texts, needsPreparation: needsPreparation, begin: {
+                guard !hostStarted else { return false }
+                hostStarted = true
+                return true
+            }, completion: finish))
         panel.center()
         translationPanel = panel
         panel.orderFrontRegardless()
