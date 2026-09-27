@@ -117,6 +117,7 @@ private func pickApplications(_ reply: @escaping Reply, _ context: UnsafeMutable
     panel.message = "选择本机应用；只在这些应用的阅读正文中自动划词翻译。"
     panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
     panel.allowedContentTypes = [.applicationBundle]
+    panel.allowsOtherFileTypes = false
     panel.canChooseFiles = true
     panel.canChooseDirectories = false
     panel.allowsMultipleSelection = true
@@ -127,6 +128,11 @@ private func pickApplications(_ reply: @escaping Reply, _ context: UnsafeMutable
         do {
             let apps = try panel.urls.map { try applicationDescriptor($0) }
             respond(["apps": apps], reply, context)
+        } catch NativeError.message(let message) {
+            // This completion runs outside the request dispatcher's catch. A
+            // Go To path can bypass the panel filter; keep our actionable error
+            // instead of Foundation's opaque "NativeError error 0" fallback.
+            respond(["error": message], reply, context)
         } catch { respond(["error": error.localizedDescription], reply, context) }
     }
     if let window = NSApp.keyWindow {

@@ -119,7 +119,13 @@ let 用户 = 1;
 - 最新默认白名单为 ChatGPT Desktop / Claude Desktop，允许原生选择本机应用；macOS 选择器显式设置 `/Applications`，可多选 `.app`，Windows 选择 `.exe`。原生保存检查路径及身份；取消不改配置，前端支持移除、重复选择去重、恢复默认、保存后生效。
 - 本机 Info.plist 检查发现 `/Applications/ChatGPT.app` 为 `com.lencx.chatgpt`；它是自选候选，不冒充 `com.openai.chat` 默认项。Codex 的 `com.openai.codex` 同理。旧默认字符串迁移，已手动选入的路径对象与空列表不被覆盖。
 - 21 项 Rust 测试通过，覆盖缺省与旧配置、保留主动移除、路径对象往返和非法项，并保留原触发/浮窗测试。`npm run check`、前端生产构建、Swift 编译、最终 macOS 打包及签名校验通过。Windows 适配模块交叉编译通过，未运行 Windows GUI。
-- 尝试重启最终开发包时，桌面工具报告 Mac 已锁定且无法自动解锁。已请求用户亲手解锁；截至此记录，尚未实测新选择器的目录、添加/取消/重复选择、保存后重启流程。不得将代码中设置了目录等同于实际 UI 验证。旧开发签名授权刷新也仍待完成；工作台与应用选择器本身不需要辅助功能权限。
+- 解锁后使用最终 macOS 原生窗口实际验证：选择器首次以及从其他目录返回后都默认打开 Applications；选入 Codex 得到独立路径项；重复选入没有重复行；取消选择保留草稿；保存并退出重启后保留 Codex 的路径和 Bundle ID。
+- 实际选入 `/Applications/ChatGPT.app`，官方默认项与第三方 ChatGPT 分别显示。保存的对象标识为 `com.lencx.chatgpt`，没有冒充 `com.openai.chat`。随后移除全部条目、保存并重启，确认空列表不会补回默认项；最后恢复默认并保存，再次重启显示仅 `chatgpt`、`claude`，测试项已清除。
+- 发现并修复原生选择器的异常提示：用“前往文件夹”直接选择 `README.md` 可以绕过面板的类型过滤，但原生应用包校验会拒绝；原异步 completion 使用 `localizedDescription` 得到不透明的 `NativeError error 0`。现在单独解包 `NativeError.message`，最终包复测显示“请选择本机已安装的 .app 应用。”，列表不变。显式关闭 `allowsOtherFileTypes` 仍不能代替提交后的原生校验。
+- 修复后重新执行 21 项 Rust 测试和 macOS 打包通过；未改 Windows 代码，不重复声称进行了 Windows GUI 测试。
+- 最终应用工作台真实翻译“请保留现有数据，并在请求失败时允许重试。”，Apple 返回 `Please keep the existing data and allow retry if the request fails.`；过程中没有要求重新下载语言包。
+- 用户先后完成 macOS 对移除旧记录和添加当前版本要求的两次 Touch ID／登录密码验证。已重新添加同一路径的最终 `.app`、确认 TranslateMe 开关为 on，重启后应用自身显示“跨应用翻译已就绪”。此后只修改文档，不再重建已授权二进制。
+- 已请求用户在 Claude Desktop 英文回复正文中完成前台鼠标拖选验收，结果待反馈。macOS 工具的后台输入不能代替这一动作；当前不将选应用/保存界面测试等同于真实跨应用自动翻译验收。
 
 ## 尚未完成的验收
 
