@@ -134,6 +134,13 @@ let 用户 = 1;
 - `npm run check`、生产前端构建、macOS 打包、签名校验通过。仅 CSS 布局变动，不为其新增实现镜像测试或重复运行 Rust 功能测试。
 - 已在系统现有验证会话内刷新同一路径开发包的旧授权，重启后显示“跨应用翻译已就绪”，无需再次让用户做 Touch ID。保留了修复前用户尚未保存的自动划词关闭草稿，未擅自保存设置；配置文件仍保留原设置。
 
+## 当前官方客户端身份纠正（2026-09-27）
+
+- 用户明确其当前客户端 About 信息为 “Powered by Codex & OWL”、版本 `26.924.22138`。本机 `/Applications/Codex.app/Contents/Info.plist` 的版本完全一致，Bundle ID 为 `com.openai.codex`，CFBundleName / CFBundleDisplayName 均为 ChatGPT。`codesign -dv --verbose=2` 显示签名 Authority 为 OpenAI OpCo, LLC，TeamIdentifier 为 `2DC432GLL2`。这是官方客户端，不能把旁边另一个 `/Applications/ChatGPT.app`（`com.lencx.chatgpt`）的身份归给当前窗口。
+- 已更正此前将用户当前客户端说成第三方的错误判断。默认 `chatgpt` 规则目前只匹配 `com.openai.chat`，因此漏掉当前版本；快捷键没有白名单限制，能使用快捷键不能证明自动匹配已通过。
+- 通过原生应用选择器将实际 `/Applications/Codex.app` 路径对象加入本机白名单，并将设置页未保存的自动划词关闭草稿改为开启、保存。界面显示就绪，设置文件复核 `autoSelection: true`，列表包含 `chatgpt`、`claude` 及 `com.openai.codex` 的路径对象。此次仅纠正本机配置，没有重建二进制或重新申请权限。
+- 提供纯英文正文后，用户在当前聊天前台拖选并明确反馈“出现了”，确认这一官方客户端在加入本机白名单后可自动弹窗。此结果仅确认纯正文触发，不扩大为混合代码保护、保存框过滤或所有浮窗位置均通过。应用全局默认识别规则未在此次配置修正中扩大；恢复默认会移除这一手动添加项。
+
 ## 尚未完成的验收
 
 - **当前 Codex 聊天的划词阅读**：用户提供了混合说明、代码和 Git 命令的译文，出现关键字及命令被翻译的问题，尚不满足开发场景验收。用户未说明此次结果是自动划词还是 `⌘⇧D` 触发，不能据此认定两条触发路径均通过。已用生产解析器复现围栏丢失后的代码泄漏，具体证据与待确认方案见 `structured-selection-proposal.md`。写入快捷键 `⌘⇧E` 仍保留用户已验证成功的记录。
