@@ -4910,12 +4910,14 @@ name = "translateme"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "base64 0.22.1",
  "dirs 6.0.0",
  "futures-util",
  "hostname",
  "keyring",
  "litellm-rust",
  "mdns-sd",
+ "png 0.18.1",
  "rand 0.9.5",
  "rcgen",
  "regex",

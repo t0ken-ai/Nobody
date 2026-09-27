@@ -1,5 +1,7 @@
 //! Windows UI Automation lives on a dedicated COM thread. COM objects and
 //! selection snapshots never cross apartment/thread boundaries.
+#[path = "windows_icons.rs"]
+mod icons;
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -92,6 +94,25 @@ impl Platform {
     }
     pub async fn call(&self, value: Value) -> Result<Value, String> {
         let (tx, rx) = oneshot::channel();
+        if value["op"] == "applicationIcons" {
+            // Shell icon providers may be slow. Keep their COM apartment away
+            // from UIA polling, and let settings fall back after a short wait.
+            std::thread::spawn(move || unsafe {
+                let result = match CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok() {
+                    Ok(()) => {
+                        let result = icons::read(&value);
+                        CoUninitialize();
+                        result
+                    }
+                    Err(_) => Err("无法读取应用图标。".into()),
+                };
+                let _ = tx.send(result);
+            });
+            return tokio::time::timeout(Duration::from_secs(8), rx)
+                .await
+                .map_err(|_| "应用图标读取超时。")?
+                .map_err(|_| "应用图标读取已结束。".to_string())?;
+        }
         if value["op"] == "pickApplications" {
             // Human browsing has no timeout. A separate STA owns the modal
             // dialog, leaving UIA polling and its COM objects on their worker.

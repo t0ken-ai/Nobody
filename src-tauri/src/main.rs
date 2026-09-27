@@ -114,6 +114,24 @@ async fn pick_applications(
     state.platform.call(request).await
 }
 
+/// Read presentation-only icons for the settings draft, including unsaved picker
+/// entries. Native adapters revalidate local paths; icons never enter preferences
+/// or participate in application identity / automatic-selection authorization.
+#[tauri::command]
+async fn get_application_icons(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+    apps: Vec<config::Application>,
+) -> Result<Value, String> {
+    if window.label() != "main" || apps.len() > 100 {
+        return Err("请在偏好设置中读取应用图标。".into());
+    }
+    state
+        .platform
+        .call(json!({"op":"applicationIcons", "apps":apps}))
+        .await
+}
+
 fn parse_shortcuts(s: &config::Settings) -> Result<(Shortcut, Shortcut), String> {
     let write: Shortcut = s
         .write_shortcut
@@ -611,6 +629,7 @@ fn main() {
             save_settings,
             test_llm_connection,
             pick_applications,
+            get_application_icons,
             request_permission,
             translate_text,
             copy_text,

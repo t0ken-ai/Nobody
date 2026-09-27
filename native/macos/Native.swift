@@ -94,6 +94,36 @@ private func defaultApplications() -> [String: Any] {
     return result
 }
 
+/// Read Finder's installed app icon without launching the app. Render to a
+/// bounded 64 px PNG (32 pt at Retina scale), never send bundle files to the UI.
+/// Missing/replaced apps return null individually; identity checks remain the
+/// same as the picker and no icon data is written to the allowlist settings.
+private func applicationIcons(_ entries: [Any]) -> [Any] {
+    let defaults = defaultApplications()
+    return entries.prefix(100).map { entry -> Any in
+        let local = (entry as? String).flatMap { defaults[$0] as? [String: Any] }
+            ?? entry as? [String: Any]
+        guard let local, local["platform"] as? String == "macOS",
+              let path = local["path"] as? String,
+              let actual = try? applicationDescriptor(URL(fileURLWithPath: path)),
+              actual["path"] as? String == path,
+              actual["bundleId"] as? String == local["bundleId"] as? String,
+              let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 64,
+                  pixelsHigh: 64, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                  isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return NSNull() }
+        let image = NSWorkspace.shared.icon(forFile: path)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        image.draw(in: NSRect(x: 0, y: 0, width: 64, height: 64), from: .zero,
+                   operation: .copy, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+        guard let data = bitmap.representation(using: .png, properties: [:]),
+              data.count <= 65536 else { return NSNull() }
+        return "data:image/png;base64," + data.base64EncodedString()
+    }
+}
+
 /// Recheck picker output before saving. Never silently accept a replacement app
 /// at the same path with a different identity. Presets need not be installed.
 private func validateApplications(_ entries: [Any]) throws {
@@ -588,6 +618,8 @@ public func nativeRequest(_ json: UnsafePointer<CChar>, _ reply: @escaping @conv
             }
             switch request["op"] as? String {
             case "pickApplications": pickApplications(reply, context)
+            case "applicationIcons":
+                respond(["icons": applicationIcons(request["apps"] as? [Any] ?? [])], reply, context)
             case "validateApplications":
                 try validateApplications(request["apps"] as? [Any] ?? [])
                 respond(["ok": true], reply, context)

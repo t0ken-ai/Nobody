@@ -79,6 +79,7 @@ const icon = (name: string) => {
     copy: '<rect x="8" y="8" width="12" height="13" rx="2"/><path d="M15 8V3H3v13h5"/>',
     check: '<path d="m5 12 4 4L19 6"/>',
     close: '<path d="m6 6 12 12M18 6 6 18"/>',
+    application: '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="M3 9h18M8 6h.01M12 6h.01M7 13h4v4H7zM14 13h3m-3 4h3"/>',
   };
   return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] ?? paths.translate}</svg>`;
 };
@@ -418,10 +419,55 @@ function sameApplication(existing: Application, chosen: LocalApplication): boole
     : existing.path === chosen.path && existing.bundleId === chosen.bundleId);
 }
 
+// Icons are disposable presentation data. Cache for five minutes in this
+// window only, including in-flight requests; never add them to Settings.
+const applicationIconCache = new Map<string, { until: number; value: Promise<string | null> }>();
+
+/** Batch missing icons without delaying settings rendering. Position-based
+ * replies bind to the original row nodes, so removal/reordering while awaiting
+ * native Shell work cannot attach another application's icon to a new row. */
+function loadApplicationIcons(apps: Application[], marks: HTMLElement[]) {
+  const keys = apps.map(app => JSON.stringify([status?.platform, app]));
+  const missing = apps.map((app, index) => ({ app, key: keys[index] }))
+    .filter(({ key }) => !applicationIconCache.has(key) || applicationIconCache.get(key)!.until < Date.now());
+  if (missing.length) {
+    if (applicationIconCache.size > 200) applicationIconCache.clear();
+    const response = call<{ icons: (string | null)[] }>("get_application_icons", { apps: missing.map(item => item.app) })
+      .then(result => result?.icons ?? []).catch(() => []);
+    missing.forEach(({ key }, index) => applicationIconCache.set(key, {
+      until: Date.now() + 5 * 60_000,
+      value: response.then(icons => {
+        const data = icons[index];
+        // Accept only bounded PNG bytes produced by native adapters. No paths,
+        // SVG or network URLs can make a settings row load external content.
+        return typeof data === "string" && data.length <= 90_000 && /^data:image\/png;base64,[A-Za-z0-9+/]+=*$/.test(data) ? data : null;
+      }),
+    }));
+  }
+  keys.forEach((key, index) => {
+    const mark = marks[index];
+    void applicationIconCache.get(key)?.value.then(data => {
+      if (!data || !mark.isConnected) return;
+      const image = new Image();
+      image.alt = "";
+      image.width = image.height = 32;
+      image.onload = () => {
+        if (!mark.isConnected) return;
+        mark.replaceChildren(image);
+        mark.classList.add("has-image");
+      };
+      // Decode failure intentionally leaves the generic application mark.
+      image.src = data;
+    });
+  });
+}
+
 /** File names are untrusted display text. Build nodes rather than interpolating
- * names/paths into HTML. Removing the last row deliberately keeps an empty list. */
+ * names/paths into HTML. Icons load separately and never mutate the draft;
+ * removing the last row deliberately keeps an empty list. */
 function renderApplications() {
   const list = $("application-list");
+  const marks: HTMLElement[] = [];
   list.replaceChildren();
   if (!applicationDraft.length) {
     const empty = document.createElement("li");
@@ -435,7 +481,8 @@ function renderApplications() {
     const mark = document.createElement("span");
     mark.className = "application-mark";
     mark.setAttribute("aria-hidden", "true");
-    mark.textContent = appName(app).slice(0, 1).toUpperCase();
+    mark.innerHTML = icon("application");
+    marks.push(mark);
     const detail = document.createElement("div");
     const name = document.createElement("strong");
     name.textContent = appName(app);
@@ -458,6 +505,7 @@ function renderApplications() {
     row.append(mark, detail, remove);
     list.append(row);
   });
+  loadApplicationIcons(applicationDraft, marks);
 }
 
 function selectedEngine(): Settings["engine"] {

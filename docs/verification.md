@@ -255,3 +255,12 @@ let 用户 = 1;
 
 - 根据用户使用习惯，将 macOS 阅读演示改为三个指尖同步轻触、拖移、抬起。三个指尖共用原有选区时间线，限制移动距离以留在触控板内；文案改为“三指轻触，拖选文字”和“触控板 · 三指拖移”。辅助描述注明系统需先开启三指拖移，应用不修改系统手势配置。
 - browser-act 检查三个指尖数量、同步位移、选区拖动时不越界及抬起后三个触点均消失；深色和模拟浅色截图已复核，800 px 无横向溢出。Windows 仍只显示鼠标和原有拖选文案。TypeScript 与差异空白检查通过；仅改演示标记、文案和样式，没有重复后端收发测试。
+
+## 白名单本机应用图标（2026-09-27）
+
+- 用户确认 macOS／Windows 原生读取和界面协同改动。macOS 使用 [NSWorkspace icon(forFile:)](https://developer.apple.com/documentation/appkit/nsworkspace/icon(forfile:)) 读取已校验的本机应用包；Windows 使用 [IShellItemImageFactory](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ishellitemimagefactory-getimage) 读取本机 `.exe` 图标，默认项从系统 Apps 文件夹匹配展示名称，重名则回退。Windows 的名称匹配只选图，不更改原可执行文件白名单身份。
+- 原生接口限主窗口、最多 100 项，单项缺失／读取错误返回 null。Windows Shell 工作在独立 STA，8 秒后界面回退，不阻塞 UIA 取词线程；位图／DC／COM 资源在工作线程释放。macOS 输出 64 px PNG，Windows 图像有尺寸及编码长度上限。前端仅接受有长度限制的 PNG data URL，在内存缓存五分钟，失败显示通用应用标志；不写入配置、数据库或白名单身份。
+- browser-act 合成 IPC 的 11 项检查通过：真实解码尺寸、单项缺失回退、图标不进入设置、复用缓存、800 px 布局、读取期间行可用、删除行后迟到响应不串图、原生失败回退且不保存设置。TypeScript、前端生产构建、macOS Swift／Rust 打包和签名检查通过；没有重跑与此显示改动无关的后端收发测试。
+- Windows 生产适配模块连同新增 Shell／GDI 图标代码在独立检查包中完成 `x86_64-pc-windows-gnu` 编译检查。未将它当作整个应用 Windows 构建或实机图标验收。
+- 本机原生深色设置页实际显示 Claude 和 Codex 的已安装图标，未安装的 ChatGPT 显示通用图标。最终同一开发包授权刷新并重启后显示“跨应用翻译已就绪”；更新前的未保存 LLM 单选草稿已恢复，未点击保存。三指演示也已包含于最终包。
+- ZIP 主程序与最终应用逐字节一致，SHA-256 为 `3881b6fb0ee4075d47db214769bf68af725575d605ba1fbb5978b48ef1a5ed12`。该包仍为本地开发签名，未 Developer ID 签名／公证。
