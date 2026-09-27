@@ -1,6 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./style.css";
+import { renderTranslation } from "./markdown";
 import { demoMarkup, mountDemos } from "./demos";
 import { transferMarkup, mountTransfer } from "./transfer";
 
@@ -23,12 +24,14 @@ type Settings = {
   readShortcut: string;
   endpoint: string;
   model: string;
+  llmPrompt: string;
 };
 type Status = {
   accessibility: boolean;
   systemTranslation: boolean;
   platform: string;
   settings: Settings;
+  defaultLlmPrompt: string;
   defaultApps?: Record<string, LocalApplication | null>;
 };
 type Result = {
@@ -83,6 +86,8 @@ const popup = new URLSearchParams(location.search).get("view") === "result";
 let status: Status | undefined;
 let latest: Result | undefined;
 let busy = false;
+let testingConnection = false;
+let llmDraftRevision = 0;
 let demos: ReturnType<typeof mountDemos> | undefined;
 let transfer: ReturnType<typeof mountTransfer> | undefined;
 
@@ -163,7 +168,7 @@ if (popup) {
           <div class="editor-toolbar"><div><span class="section-title">试译一段</span><button id="sample" class="text-button">使用当前聊天示例 ↗</button></div><span id="engine-badge" class="engine-badge">Apple 系统翻译</span></div>
           <div class="translation-grid">
             <section class="editor-pane"><header><span>自动识别语言</span><span class="muted">原文</span></header><textarea id="source" aria-label="原文" spellcheck="false" placeholder="在这里输入，或直接在其他应用中使用快捷键…"></textarea><footer><span id="count">0 / 16,000</span><button id="clear" class="text-button">清空</button></footer></section>
-            <section class="editor-pane output-pane"><header><select id="target" aria-label="翻译目标语言">${languageOptions}</select><span class="muted">译文</span></header><textarea id="output" aria-label="译文" readonly placeholder="译文会显示在这里。"></textarea><footer><span id="result-meta">代码片段原样保留</span><button id="copy" class="text-button" disabled>${icon("copy")}复制译文</button></footer></section>
+            <section class="editor-pane output-pane"><header><select id="target" aria-label="翻译目标语言">${languageOptions}</select><span class="muted">译文</span></header><div id="output" class="translation-output empty" role="region" aria-label="译文" tabindex="0" data-placeholder="译文会显示在这里。"></div><footer><span id="result-meta">代码片段原样保留</span><button id="copy" class="text-button" disabled>${icon("copy")}复制译文</button></footer></section>
           </div>
           <div class="action-row"><span class="privacy-note" id="engine-note">系统翻译在本机处理；首次使用可能需要下载语言包。</span><button id="translate" class="button primary">翻译成英文 ${icon("arrow")}</button></div>
         </section>
@@ -173,7 +178,12 @@ if (popup) {
           <form id="settings-form">
             <div class="setting-card"><h2>翻译引擎</h2><div class="engine-choices"><label><input type="radio" name="engine" value="system" checked /><span><strong>系统翻译</strong><small>macOS · 本机处理 · 无需 API Key</small></span></label><label><input type="radio" name="engine" value="llm" /><span><strong>自定义 LLM</strong><small>macOS / Windows · 兼容 Chat Completions 接口</small></span></label></div>
             <p id="system-help" class="field-help">系统会在需要时提示下载语言包。</p>
-            <div id="llm-fields" hidden><label class="field">API 地址<input id="endpoint" type="url" placeholder="https://your-provider.com/v1" autocomplete="off" /></label><div class="field-row"><label class="field">模型名称<input id="model" placeholder="服务商提供的模型 ID" autocomplete="off" /></label><label class="field">API Key<input id="api-key" type="password" placeholder="留空保留已保存的密钥" autocomplete="new-password" /></label></div><label class="checkbox-row"><input id="delete-key" type="checkbox" />删除当前服务已保存的密钥</label><p class="field-help">密钥保存在系统凭据库。文字只发送到你配置的服务；本机 LLM 可使用 localhost 地址。</p></div></div>
+            <div id="llm-fields" hidden><div class="llm-toolbar"><span>Coding Plan / 兼容接口</span><div><button id="zai-preset" class="button small" type="button">Z.ai GLM-5.3</button> <button id="kimi-preset" class="button small" type="button">Kimi K3</button></div></div><label class="field">API 地址<input id="endpoint" type="url" placeholder="https://your-provider.com/v1" autocomplete="off" /></label><div class="field-row"><label class="field">模型名称<input id="model" placeholder="服务商提供的模型 ID" autocomplete="off" /></label><label class="field">API Key<input id="api-key" type="password" placeholder="留空保留已保存的密钥" autocomplete="new-password" /></label></div><label class="checkbox-row"><input id="delete-key" type="checkbox" />删除当前服务已保存的密钥</label><p class="field-help">密钥保存在系统凭据库。文字只发送到你配置的服务；本机 LLM 可使用 localhost 地址。Coding Plan 可读取应用进程继承的 ZAI_KEY / KIMI_KEY；从 Finder 启动可能需要填写密钥。</p>
+              <div class="prompt-heading"><label for="llm-prompt">角色与翻译规则</label><button id="reset-prompt" class="text-button" type="button">恢复默认</button></div>
+              <textarea id="llm-prompt" class="prompt-editor" maxlength="12000" spellcheck="false" aria-describedby="prompt-help"></textarea>
+              <p id="prompt-help" class="field-help">整段选中文字（包含代码）会提供给 LLM。可调整语气和翻译偏好；代码保留与完整性校验始终启用。</p>
+              <div class="llm-test-row"><button id="test-llm" class="button small" type="button">测试连接</button><span id="llm-test-status" role="status">用当前配置翻译固定测试句，无需先保存。</span></div><div id="llm-test-preview" class="llm-test-preview" hidden></div>
+            </div></div>
             <div class="setting-card"><h2>阅读与快捷键</h2><div class="field-row"><label class="field">阅读目标语言<select id="reading-language">${languageOptions}</select></label><label class="field">划词自动翻译<span class="switch-row"><input id="auto-selection" type="checkbox" /><span>仅在白名单应用中触发</span></span></label></div><div class="allowlist-field"><div class="allowlist-heading"><span>自动划词 · 应用白名单</span><button id="add-application" class="button small" type="button">＋ 添加本机应用</button></div><ul id="application-list" aria-label="自动划词应用白名单"></ul><div class="allowlist-footer"><span>默认：ChatGPT Desktop、Claude Desktop</span><button id="reset-applications" class="text-button" type="button">恢复默认</button></div><p class="field-help">只在列表中应用的阅读正文里自动翻译；输入框、保存／打开文件对话框忽略。手动快捷键不受白名单限制。修改后请保存设置。</p></div><div class="field-row"><label class="field">写入英文快捷键<input id="write-key" aria-label="写入英文快捷键" /></label><label class="field">阅读翻译快捷键<input id="read-key" aria-label="阅读翻译快捷键" /></label></div><p class="field-help">可直接按组合键录入。翻译只负责回填，不会替你按发送；输入变化时保留译文供复制。</p></div>
             <div class="action-row"><span class="privacy-note">不保存翻译历史</span><button class="button primary" type="submit" id="save">保存设置 ${icon("check")}</button></div>
           </form>
@@ -315,11 +325,9 @@ if (popup) {
     renderApplications();
     notice("已恢复默认列表，点击“保存设置”后生效。");
   };
-  $("settings-form").onsubmit = async (event) => {
-    event.preventDefault();
-    if (pickingApplication) return;
-    $<HTMLButtonElement>("save").disabled = true;
-    const settings: Settings = {
+  /** One snapshot for Save and Test; neither form reads live source selections. */
+  function settingsDraft(): Settings {
+    return {
       engine: selectedEngine(),
       targetLanguage: $<HTMLSelectElement>("reading-language").value,
       autoSelection: $<HTMLInputElement>("auto-selection").checked,
@@ -328,7 +336,74 @@ if (popup) {
       readShortcut: $<HTMLInputElement>("read-key").value,
       endpoint: $<HTMLInputElement>("endpoint").value.trim(),
       model: $<HTMLInputElement>("model").value.trim(),
+      llmPrompt: $<HTMLTextAreaElement>("llm-prompt").value,
     };
+  }
+  /** Any draft edit invalidates prior evidence, including an in-flight result. */
+  function invalidateLlmTest() {
+    llmDraftRevision++;
+    $("llm-test-status").textContent = "配置已修改，测试后可查看连接与译文。";
+    $("llm-test-status").classList.remove("error");
+    $("llm-test-preview").hidden = true;
+  }
+  for (const id of ["endpoint", "model", "api-key", "delete-key", "llm-prompt"]) {
+    $(id).addEventListener("input", invalidateLlmTest);
+  }
+  /** Presets select only documented Coding Plan endpoints; draft keys cannot cross providers. */
+  function applyLlmPreset(url: string, model: string) {
+    const endpoint = $<HTMLInputElement>("endpoint");
+    if (endpoint.value !== url) {
+      // A preset must not accidentally carry another provider's unsaved key.
+      $<HTMLInputElement>("api-key").value = "";
+      $<HTMLInputElement>("delete-key").checked = false;
+    }
+    endpoint.value = url;
+    $<HTMLInputElement>("model").value = model;
+    invalidateLlmTest();
+  }
+  $("zai-preset").onclick = () => applyLlmPreset("https://api.z.ai/api/coding/paas/v4", "glm-5.3");
+  $("kimi-preset").onclick = () => applyLlmPreset("https://api.kimi.com/coding/v1", "k3");
+  $("reset-prompt").onclick = () => {
+    if (!status?.defaultLlmPrompt) return;
+    $<HTMLTextAreaElement>("llm-prompt").value = status.defaultLlmPrompt;
+    invalidateLlmTest();
+  };
+  $("test-llm").onclick = async () => {
+    if (testingConnection || pickingApplication || busy) return;
+    testingConnection = true;
+    const revision = llmDraftRevision;
+    const button = $<HTMLButtonElement>("test-llm");
+    button.disabled = true;
+    button.textContent = "正在测试…";
+    $<HTMLButtonElement>("save").disabled = true;
+    $("llm-test-status").textContent = "正在请求模型并检查测试译文…";
+    $("llm-test-status").classList.remove("error");
+    $("llm-test-preview").hidden = true;
+    const key = $<HTMLInputElement>("api-key").value;
+    const apiKey = $<HTMLInputElement>("delete-key").checked ? "" : key || null;
+    try {
+      const result = await call<{ elapsedMs: number; model: string; translation: string }>("test_llm_connection", { settings: settingsDraft(), apiKey });
+      // A slow completion from an older draft cannot certify edited settings.
+      if (revision !== llmDraftRevision) return;
+      $("llm-test-status").textContent = `连接成功 · ${(result.elapsedMs / 1000).toFixed(1)} 秒 · ${result.model}`;
+      renderTranslation($("llm-test-preview"), result.translation, true);
+      $("llm-test-preview").hidden = false;
+    } catch (error) {
+      if (revision !== llmDraftRevision) return;
+      $("llm-test-status").textContent = String(error);
+      $("llm-test-status").classList.add("error");
+    } finally {
+      testingConnection = false;
+      button.disabled = false;
+      button.textContent = "测试连接";
+      $<HTMLButtonElement>("save").disabled = pickingApplication;
+    }
+  };
+  $("settings-form").onsubmit = async (event) => {
+    event.preventDefault();
+    if (pickingApplication || testingConnection) return;
+    $<HTMLButtonElement>("save").disabled = true;
+    const settings = settingsDraft();
     const key = $<HTMLInputElement>("api-key").value;
     const apiKey = $<HTMLInputElement>("delete-key").checked ? "" : key || null;
     try {
@@ -414,7 +489,7 @@ function display(result: Result) {
   latest = result;
   notice("");
   if (popup) {
-    $("popup-text").textContent = result.text;
+    renderTranslation($("popup-text"), result.text, result.engine === "llm");
     $("popup-language").textContent = label(result.target);
     $("popup-origin").textContent =
       `${result.origin} · ${result.engine === "system" ? "系统翻译" : "LLM"}`;
@@ -423,7 +498,7 @@ function display(result: Result) {
     document.body.classList.remove("popup-loading");
     resizePopup();
   } else {
-    $<HTMLTextAreaElement>("output").value = result.text;
+    renderTranslation($("output"), result.text, result.engine === "llm");
     $("result-meta").textContent =
       `${label(result.target)} · ${result.engine === "system" ? "系统翻译" : "LLM"}`;
     $<HTMLButtonElement>("copy").disabled = false;
@@ -453,7 +528,7 @@ async function refresh(initializeForm = true) {
     $("engine-note").textContent =
       s.engine === "system"
         ? "系统翻译在本机处理；首次使用可能需要下载语言包。"
-        : "文字将发送到你配置的 LLM 服务。代码片段留在本机。";
+        : "整段文字与代码将发送到你配置的 LLM 服务，结合上下文翻译。";
     $("system-help").textContent = status.systemTranslation
       ? "Apple 系统翻译可用。首次使用时，系统可能提示下载语言包。"
       : `${status.platform} 当前构建无法使用系统翻译，请选择 LLM。macOS 需使用含 Translation 的 SDK 构建。`;
@@ -470,6 +545,7 @@ async function refresh(initializeForm = true) {
       $<HTMLInputElement>("read-key").value = s.readShortcut;
       $<HTMLInputElement>("endpoint").value = s.endpoint;
       $<HTMLInputElement>("model").value = s.model;
+      $<HTMLTextAreaElement>("llm-prompt").value = s.llmPrompt;
     }
   } catch (error) {
     notice(String(error), true);

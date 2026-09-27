@@ -3,6 +3,10 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{fs, path::Path};
 
+/// One source for the shipped, editable persona. Protocol and code-integrity
+/// checks stay in translation.rs, so changing tone cannot disable validation.
+pub const DEFAULT_LLM_PROMPT: &str = include_str!("../prompts/developer-translator.txt");
+
 /// Presets follow a known native identity even before installation. User-picked
 /// apps bind to a canonical local path (and a bundle ID on macOS), so unrelated
 /// applications with the same display name cannot gain automatic capture.
@@ -51,6 +55,8 @@ pub struct Settings {
     pub read_shortcut: String,
     pub endpoint: String,
     pub model: String,
+    /// User-editable translation voice and rules; no secrets or conversation history.
+    pub llm_prompt: String,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -66,6 +72,7 @@ impl Default for Settings {
             read_shortcut: "CommandOrControl+Shift+D".into(),
             endpoint: String::new(),
             model: String::new(),
+            llm_prompt: DEFAULT_LLM_PROMPT.into(),
         }
     }
 }
@@ -115,6 +122,9 @@ pub fn endpoint_url(raw: &str) -> Result<url::Url, String> {
 }
 
 pub fn validate(s: &Settings) -> Result<(), String> {
+    if s.llm_prompt.trim().is_empty() || s.llm_prompt.chars().count() > 12000 {
+        return Err("翻译提示词不能为空，且不能超过 12,000 字符。".into());
+    }
     // Structural validation is platform independent. Native validation at save
     // time additionally verifies the file/bundle exists and matches its identity.
     if s.automatic_apps.len() > 100 {
@@ -223,6 +233,7 @@ mod tests {
         let legacy: Settings =
             serde_json::from_str(r#"{"automaticApps":["codex","claude"]}"#).unwrap();
         assert_eq!(missing.automatic_apps, Settings::default().automatic_apps);
+        assert_eq!(missing.llm_prompt, DEFAULT_LLM_PROMPT);
         assert_eq!(legacy.automatic_apps, missing.automatic_apps);
         let empty: Settings = serde_json::from_str(r#"{"automaticApps":[]}"#).unwrap();
         assert!(empty.automatic_apps.is_empty());
@@ -272,5 +283,18 @@ mod tests {
                 .path(),
             "/v1/chat/completions"
         );
+    }
+    #[test]
+    fn custom_prompt_roundtrips_and_rejects_empty_or_oversized_rules() {
+        let mut s = Settings {
+            llm_prompt: "用简洁的美式英语翻译。".into(),
+            ..Settings::default()
+        };
+        let copy: Settings = serde_json::from_value(serde_json::to_value(&s).unwrap()).unwrap();
+        assert_eq!(copy.llm_prompt, s.llm_prompt);
+        for prompt in [" ".to_string(), "字".repeat(12001)] {
+            s.llm_prompt = prompt;
+            assert!(validate(&s).is_err());
+        }
     }
 }

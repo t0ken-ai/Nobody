@@ -11,6 +11,14 @@
     "bundle": "tauri build",
     "check": "tsc --noEmit"
   },
-  "dependencies": { "@tauri-apps/api": "^2.8.0" },
-  "devDependencies": { "@tauri-apps/cli": "^2.8.0", "typescript": "~5.9.2", "vite": "^7.1.0" }
+  "dependencies": {
+    "@tauri-apps/api": "^2.8.0",
+    "dompurify": "^3.4.16",
+    "marked": "^18.0.14"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.0",
+    "typescript": "~5.9.2",
+    "vite": "^7.1.0"
+  }
 }

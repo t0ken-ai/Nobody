@@ -68,7 +68,24 @@ async fn get_settings(state: tauri::State<'_, AppState>) -> Result<Value, String
     let settings = preferences(&state);
     let mut status = state.platform.call(json!({"op":"status"})).await?;
     status["settings"] = serde_json::to_value(settings).map_err(|e| e.to_string())?;
+    status["defaultLlmPrompt"] = json!(config::DEFAULT_LLM_PROMPT);
     Ok(status)
+}
+
+/// Exercise the unsaved LLM draft through the production request/validation
+/// path. Do not publish a translation event or persist the draft/key on success.
+#[tauri::command]
+async fn test_llm_connection(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+    settings: config::Settings,
+    api_key: Option<String>,
+) -> Result<translation::ConnectionTest, String> {
+    if window.label() != "main" {
+        return Err("请在偏好设置中测试连接。".into());
+    }
+    let _busy = start(&state)?;
+    translation::test_connection(&state.http, &settings, api_key).await
 }
 
 /// Only the main settings window may open a chooser. Its own gate prevents
@@ -588,6 +605,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             save_settings,
+            test_llm_connection,
             pick_applications,
             request_permission,
             translate_text,

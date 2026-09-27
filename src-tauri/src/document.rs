@@ -1,5 +1,6 @@
-//! Code-bearing spans never leave this module for either engine. Translating
-//! only prose avoids relying on a model to reproduce opaque placeholders.
+//! System translation receives prose only and restores protected spans locally.
+//! LLM translation sees the full document for context; these same spans form a
+//! minimum integrity check in addition to the model's inferred code regions.
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -62,6 +63,15 @@ impl Document {
             .iter()
             .filter(|(translate, _)| *translate)
             .map(|(_, text)| text.clone())
+            .collect()
+    }
+    /// Known code, paths and identifiers must survive full-context translation.
+    /// Whitespace-only fragments are layout, not immutable source literals.
+    pub fn protected_spans(&self) -> Vec<&str> {
+        self.parts
+            .iter()
+            .filter(|(translate, text)| !translate && text.chars().any(char::is_alphanumeric))
+            .map(|(_, text)| text.as_str())
             .collect()
     }
     pub fn restore(&self, translated: Vec<String>) -> Result<String, String> {
