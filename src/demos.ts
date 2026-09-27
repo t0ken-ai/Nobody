@@ -71,6 +71,7 @@ export function mountDemos() {
   let visible = true;
   let frame = 0;
   let lastTime = 0;
+  let shownShortcut = "";
   const scenes: Scene[] = (["write", "read"] as const).map(mode => {
     const root = document.getElementById(`demo-${mode}`)!;
     return {
@@ -199,6 +200,10 @@ export function mountDemos() {
     /** Settings and tutorials share modifier semantics. Native platform updates
      * also switch the pointer illustration; this never changes input capture. */
     setWriteShortcut(write: string, nextPlatform = desktopPlatform()) {
+      // Focus/permission refreshes usually return the same shortcut. Avoid
+      // replacing keycaps and restarting caption state on every activation.
+      if (write === shownShortcut && platform === nextPlatform) return;
+      shownShortcut = write;
       platform = nextPlatform;
       scenes.forEach(scene => {
         scene.root.dataset.platform = platform;

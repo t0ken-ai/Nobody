@@ -27,6 +27,9 @@ pub fn install(app: &tauri::AppHandle) {
         if let Some(window) = handle.get_webview_window("main") {
             if kind == "pairing" {
                 let _ = window.show();
+                // Pairing can show without focusing. Wake the view explicitly
+                // so a paused hidden page still presents the trust challenge.
+                let _ = window.emit("main-window-visible", true);
             }
             let _ = window.emit("transfer-event", kind);
         }

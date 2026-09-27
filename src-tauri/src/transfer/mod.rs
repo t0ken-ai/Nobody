@@ -26,7 +26,7 @@ pub type Service = Arc<TransferService>;
 pub type EventSink = Arc<dyn Fn(&str) + Send + Sync>;
 /// Runtime network addresses are candidates only; the certificate fingerprint
 /// must still match this id before a connection can reach pairing or data.
-#[derive(Clone, Serialize)]
+#[derive(Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Peer {
     pub id: String,
@@ -222,11 +222,7 @@ impl TransferService {
                 .iter()
                 .rev()
                 .take(100)
-                .map(|r| {
-                    let mut v = r.clone();
-                    v.text = r.text.chars().take(180).collect();
-                    v
-                })
+                .map(Record::preview)
                 .collect(),
         }
     }

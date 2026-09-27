@@ -3,6 +3,7 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import Darwin
 import NaturalLanguage
 import UniformTypeIdentifiers
 #if canImport(Translation)
@@ -43,6 +44,24 @@ private struct Snapshot {
     let created: Date
 }
 private var snapshots: [String: Snapshot] = [:]
+private var backgroundCleanup: DispatchWorkItem?
+
+/// Startup/IPC can leave freed allocations in malloc's caches. After five
+/// seconds hidden, return only unused pages to macOS; live drafts, keys and
+/// transfers remain allocated. This is one-shot, never a polling trim loop.
+private func scheduleBackgroundCleanup() {
+    backgroundCleanup?.cancel()
+    let work = DispatchWorkItem {
+        backgroundCleanup = nil
+        guard let main = NSApp.windows.first(where: { $0.title == "TranslateMe" }),
+              !main.isVisible || main.isMiniaturized else { return }
+        // The system allocator decides what can be unmapped safely. Do not
+        // force page-out or touch active allocations to lower a memory counter.
+        malloc_zone_pressure_relief(nil, 0)
+    }
+    backgroundCleanup = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: work)
+}
 
 /// Presets identify the official clients, not similarly named wrappers. A
 /// custom selection additionally binds to its canonical app-bundle location.
@@ -180,9 +199,31 @@ private final class SelectionMouse {
     var dragged = false
     var sequence: UInt64 = 0
     var released: (pid: pid_t, time: TimeInterval)?
+    var preparedPID: pid_t?
+
+    /// Electron may build its AX tree asynchronously after activation. Prime a
+    /// newly encountered allowed app once, before its first selection, without
+    /// reading any focused control or document during idle metadata polling.
+    func prepareAccessibility(_ app: NSRunningApplication) {
+        guard preparedPID != app.processIdentifier, applicationAllowed(app, allowed), AXIsProcessTrusted() else { return }
+        let root = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(root, 0.25)
+        AXUIElementSetAttributeValue(root, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        preparedPID = app.processIdentifier
+    }
 
     func configure(_ applications: [Any]) {
         allowed = applications
+        // No allowlist means no automatic gestures. Remove the global monitor
+        // rather than keep receiving events after the user disables the feature.
+        if allowed.isEmpty {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+            down = nil
+            released = nil
+            preparedPID = nil
+            return
+        }
         guard monitor == nil, !allowed.isEmpty else { return }
         monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
             guard let self else { return }
@@ -221,6 +262,20 @@ private final class SelectionMouse {
     }
 }
 private let selectionMouse = SelectionMouse()
+
+/// Cheap metadata decides whether the coordinator needs an AX read this tick.
+/// Missing hints preserve explicit/older callers; a pending debounce or a live
+/// result still reads every tick so scrolling, edits and focus loss stay visible.
+private func needsSelectionCapture(_ request: [String: Any], _ metadata: [String: Any], _ pid: pid_t) -> Bool {
+    guard request["op"] as? String == "selection", let poll = request["poll"] as? [String: Any] else { return true }
+    let tracking = request["tracking"] as? [String: Any] ?? [:]
+    if tracking["pid"] as? Int32 == pid || poll["pending"] as? Bool == true { return true }
+    guard metadata["mouseDown"] as? Bool != true,
+          let gesture = metadata["gestureId"] as? String, !gesture.isEmpty,
+          gesture != poll["gestureId"] as? String,
+          let age = metadata["gestureAgeMs"] as? Int, age <= 2000 else { return false }
+    return true
+}
 
 private func elementAttribute(_ element: AXUIElement, _ name: String) -> AXUIElement? {
     guard let raw = attribute(element, name), CFGetTypeID(raw) == AXUIElementGetTypeID() else { return nil }
@@ -373,6 +428,14 @@ private func capture(_ request: [String: Any]) throws -> [String: Any] {
     let automatic = request["op"] as? String == "selection"
     let allowed = request["allowedApps"] as? [Any] ?? []
     guard let foreground = NSWorkspace.shared.frontmostApplication else { return ["ignored": true] }
+    if automatic { selectionMouse.prepareAccessibility(foreground) }
+    var metadata = selectionMouse.metadata(foreground.processIdentifier)
+    metadata["mouseDown"] = NSEvent.pressedMouseButtons & 1 != 0
+    if !needsSelectionCapture(request, metadata, foreground.processIdentifier) {
+        // No focused-element, ancestry, text or geometry IPC occurs at idle.
+        metadata.merge(["ignored": true, "reason": "idle", "pid": foreground.processIdentifier]) { _, next in next }
+        return metadata
+    }
     let appAllowed = applicationAllowed(foreground, allowed)
     let tracking = request["tracking"] as? [String: Any] ?? [:]
     // Following an explicitly requested result is allowed only for its exact
@@ -389,7 +452,7 @@ private func capture(_ request: [String: Any]) throws -> [String: Any] {
         "contextId": contextId, "autoEligible": appAllowed && context == "reading",
         "mouseDown": NSEvent.pressedMouseButtons & 1 != 0]
     if automatic {
-        result.merge(selectionMouse.metadata(app.processIdentifier)) { _, next in next }
+        result.merge(metadata) { _, next in next }
         let following = tracking["pid"] as? Int32 == app.processIdentifier && tracking["contextId"] as? String == contextId
         if (!appAllowed || context != "reading") && !following {
             result["ignored"] = true
@@ -398,7 +461,10 @@ private func capture(_ request: [String: Any]) throws -> [String: Any] {
         }
     }
     let selected = textAttribute(element, kAXSelectedTextAttribute) ?? ""
-    let value = textAttribute(element, kAXValueAttribute)
+    // AXValue can be an entire chat/document. Only whole-input translation or
+    // a compare-before-replace ticket needs it; reading a selection never does.
+    let value = request["whole"] as? Bool == true || request["ticket"] as? Bool == true
+        ? textAttribute(element, kAXValueAttribute) : nil
     let role = textAttribute(element, kAXRoleAttribute) ?? ""
     let editable = [kAXTextAreaRole, kAXTextFieldRole, kAXComboBoxRole].contains(role)
         && (isSettable(element, kAXValueAttribute) || isSettable(element, kAXSelectedTextAttribute) || isSettable(element, kAXSelectedTextRangeAttribute))
@@ -417,6 +483,9 @@ private func capture(_ request: [String: Any]) throws -> [String: Any] {
         if snapshots.count >= 16 { snapshots.removeAll() }
         let id = UUID().uuidString
         snapshots[id] = Snapshot(element: element, pid: app.processIdentifier, value: value, selected: selected, range: rangeAttribute(element), whole: whole, created: Date())
+        // Failed/cancelled engine calls may never consume their ticket. Release
+        // its original document and AX objects even if no later capture occurs.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 120) { snapshots.removeValue(forKey: id) }
         result["ticket"] = id
     }
     return result
@@ -617,6 +686,9 @@ public func nativeRequest(_ json: UnsafePointer<CChar>, _ reply: @escaping @conv
                 selectionMouse.configure(request["allowedApps"] as? [Any] ?? [])
             }
             switch request["op"] as? String {
+            case "background":
+                scheduleBackgroundCleanup()
+                respond(["ok": true], reply, context)
             case "pickApplications": pickApplications(reply, context)
             case "applicationIcons":
                 respond(["icons": applicationIcons(request["apps"] as? [Any] ?? [])], reply, context)

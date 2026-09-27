@@ -85,16 +85,23 @@ pub fn start(
                         let id=prop("id");
                         if id==own_id||id.len()!=64||!id.bytes().all(|b|b.is_ascii_hexdigit())||prop("version")!="1"{continue;}
                         let Ok(name)=bounded_name(prop("name"))else{continue;};
-                        let addresses:Vec<_>=info.get_addresses_v4().into_iter().filter(|a|local_address((*a).into())&&!a.is_loopback()).take(8).map(|a|SocketAddr::new(a.into(),info.get_port())).collect();
+                        let mut addresses:Vec<_>=info.get_addresses_v4().into_iter().filter(|a|local_address((*a).into())&&!a.is_loopback()).map(|a|SocketAddr::new(a.into(),info.get_port())).collect();
+                        // mDNS address sets have no stable order. Normalize
+                        // before comparing so periodic verification of an
+                        // unchanged peer does not wake the UI every 20 seconds.
+                        addresses.sort_unstable(); addresses.truncate(8);
                         if addresses.is_empty(){continue;}
                         let platform=match prop("os"){"macOS"=>"macOS","Windows"=>"Windows",_=>"未知系统"}.into();
                         let mut i=service.inner.lock().unwrap();
-                        if i.peers.len()<256||i.peers.contains_key(id){i.peers.insert(id.into(),Peer{id:id.into(),name,platform,addresses,online:true,trusted:false,service_name:info.get_fullname().into()});}
-                        drop(i);service.emit("changed");
+                        let peer=Peer{id:id.into(),name,platform,addresses,online:true,trusted:false,service_name:info.get_fullname().into()};
+                        let changed=(i.peers.len()<256||i.peers.contains_key(id))&&i.peers.get(id)!=Some(&peer);
+                        if changed{i.peers.insert(id.into(),peer);}
+                        drop(i);if changed{service.emit("changed");}
                     }
                     Ok(ServiceEvent::ServiceRemoved(_,fullname))=>{
-                        let mut i=service.inner.lock().unwrap();for p in i.peers.values_mut().filter(|p|p.service_name==fullname){p.online=false;}
-                        drop(i);service.emit("changed");
+                        let mut i=service.inner.lock().unwrap();let mut changed=false;
+                        for p in i.peers.values_mut().filter(|p|p.service_name==fullname&&p.online){p.online=false;changed=true;}
+                        drop(i);if changed{service.emit("changed");}
                     }
                     Err(_)=>{service.network_failed(&stop,"局域网发现服务已结束，请重新连接。".into()).await;break;},
                     _=>{}

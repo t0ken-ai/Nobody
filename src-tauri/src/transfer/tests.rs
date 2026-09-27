@@ -98,6 +98,35 @@ fn terminal(s: &Service, id: &str) -> bool {
         .any(|r| r.id == id && ["completed", "failed", "cancelled"].contains(&r.phase.as_str()))
 }
 
+/// Frequent progress snapshots must stay small without damaging the full text
+/// retained for explicit copy/view. Use multibyte input to catch byte slicing.
+#[test]
+fn history_preview_does_not_copy_or_truncate_the_stored_body() {
+    let record = Record {
+        id: "preview".into(),
+        peer_id: "peer".into(),
+        peer_name: "Mac".into(),
+        direction: "received".into(),
+        phase: "completed".into(),
+        created_at: 1,
+        bytes: 0,
+        total: 0,
+        text: "中🙂".repeat(100_000),
+        files: vec![],
+        paths: vec![PathBuf::from("/received/example.txt")],
+        error: String::new(),
+    };
+    let preview = record.preview();
+    assert_eq!(preview.text, "中🙂".repeat(90));
+    assert!(
+        preview.text.capacity() < 4096,
+        "a preview must not retain a full-body allocation"
+    );
+    assert_eq!(record.text.len(), 700_000);
+    assert_eq!(preview.paths, record.paths);
+    assert_eq!(preview.id, record.id);
+}
+
 #[tokio::test]
 async fn first_pairing_streams_text_files_and_preserves_existing_names() {
     let a = fixture("A").await;

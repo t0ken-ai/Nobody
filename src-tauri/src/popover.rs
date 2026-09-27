@@ -224,9 +224,12 @@ impl Popover {
     }
     /// Manual results may originate outside the automatic allowlist. Follow
     /// only that exact control, without authorizing new automatic requests.
+    /// A dismissed result needs no further geometry/text reads; the gesture
+    /// gate still remembers its selection and prevents it from reopening.
     pub fn tracking(&self) -> Value {
         self.active
             .as_ref()
+            .filter(|session| !session.dismissed)
             .map(|session| session.source.clone())
             .unwrap_or(Value::Null)
     }
@@ -374,6 +377,12 @@ mod tests {
         assert_ne!(identity(&capture, "en"), identity(&other, "en"));
         popup.observe(&identity(&other, "en"), None);
         assert!(popup.tracking().is_null());
+        popup.begin(identity(&capture, "en"), None, Some(&capture));
+        popup.dismiss();
+        assert!(
+            popup.tracking().is_null(),
+            "closed results must stop native text/geometry reads"
+        );
     }
     fn fixture(x: f64, y: f64) -> Anchor {
         Anchor {

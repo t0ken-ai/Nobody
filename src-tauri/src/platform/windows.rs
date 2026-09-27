@@ -35,7 +35,7 @@ use windows::Win32::{
 
 type Job = (Value, oneshot::Sender<Result<Value, String>>);
 pub struct Platform {
-    sender: mpsc::Sender<Job>,
+    sender: mpsc::SyncSender<Job>,
 }
 struct Snapshot {
     element: IUIAutomationElement,
@@ -49,7 +49,9 @@ struct Snapshot {
 
 impl Platform {
     pub fn new(_resources: &Path) -> Result<Self, String> {
-        let (sender, receiver) = mpsc::channel::<Job>();
+        // A hung third-party UIA provider must not accumulate an unbounded
+        // queue during an overnight session. Never block a Tokio task sending.
+        let (sender, receiver) = mpsc::sync_channel::<Job>(16);
         let (ready_tx, ready_rx) = mpsc::channel();
         std::thread::spawn(move || unsafe {
             let init = CoInitializeEx(None, COINIT_MULTITHREADED);
@@ -70,12 +72,35 @@ impl Platform {
             let mut snapshots = HashMap::new();
             let mut mouse = SelectionMouse::default();
             loop {
+                snapshots
+                    .retain(|_, s: &mut Snapshot| s.created.elapsed() < Duration::from_secs(120));
                 // Sample only mouse button/position metadata between COM jobs.
                 // Very short gestures missed during a slow provider call fail
                 // closed; keyboard contents and window text are never polled.
-                mouse.poll();
-                match receiver.recv_timeout(Duration::from_millis(16)) {
+                // With automatic selection disabled, block until a real job or
+                // a ticket's expiry instead of waking ~63 times per second.
+                let timeout = if mouse.allowed.is_empty() {
+                    snapshots
+                        .values()
+                        .map(|s| Duration::from_secs(120).saturating_sub(s.created.elapsed()))
+                        .min()
+                } else {
+                    mouse.poll();
+                    Some(Duration::from_millis(16))
+                };
+                let next = match timeout {
+                    Some(timeout) => receiver.recv_timeout(timeout),
+                    None => receiver
+                        .recv()
+                        .map_err(|_| mpsc::RecvTimeoutError::Disconnected),
+                };
+                match next {
                     Ok((request, reply)) => {
+                        // Timed-out callers no longer authorize delayed reads
+                        // or writes when a previously hung provider recovers.
+                        if reply.is_closed() {
+                            continue;
+                        }
                         let _ =
                             reply.send(dispatch(&automation, &mut snapshots, &mut mouse, request));
                     }
@@ -130,8 +155,11 @@ impl Platform {
             return rx.await.map_err(|_| "应用选择器已结束。")?;
         }
         self.sender
-            .send((value, tx))
-            .map_err(|_| "Windows 系统服务已停止。")?;
+            .try_send((value, tx))
+            .map_err(|error| match error {
+                mpsc::TrySendError::Full(_) => "目标应用未响应，请稍后重试。",
+                mpsc::TrySendError::Disconnected(_) => "Windows 系统服务已停止。",
+            })?;
         tokio::time::timeout(Duration::from_secs(8), rx)
             .await
             .map_err(|_| "目标应用没有响应辅助功能请求。")?
@@ -264,6 +292,18 @@ struct SelectionMouse {
     sequence: u64,
 }
 impl SelectionMouse {
+    /// Disabling/re-enabling monitoring cannot resurrect an old release. Keep
+    /// sequence monotonic so a later genuine selection still has a unique ID.
+    fn configure(&mut self, allowed: Vec<Value>) {
+        self.allowed = allowed;
+        if self.allowed.is_empty() {
+            self.held = false;
+            self.start = None;
+            self.last_click = None;
+            self.released = None;
+        }
+    }
+
     /// Small jitter is not selection intent; a double click uses the system's
     /// timing/distance. A release must remain in the same allowlisted process.
     unsafe fn poll(&mut self) {
@@ -474,6 +514,28 @@ unsafe fn capture(
 ) -> Result<Value, String> {
     let automatic = request["op"] == "selection";
     let front = foreground_pid();
+    let mut metadata = json!({"pid":front});
+    mouse.annotate(&mut metadata, front);
+    if automatic
+        && request["poll"].is_object()
+        && request["tracking"]["pid"].as_u64() != Some(front as u64)
+        && request["poll"]["pending"] != true
+    {
+        // Metadata is local. Enter UIA only for a fresh release, an already
+        // armed debounce, or the source of an existing popover.
+        let fresh = metadata["mouseDown"] != true
+            && metadata["gestureId"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty() && request["poll"]["gestureId"] != id)
+            && metadata["gestureAgeMs"]
+                .as_u64()
+                .is_some_and(|age| age <= 2000);
+        if !fresh {
+            metadata["ignored"] = json!(true);
+            metadata["reason"] = json!("idle");
+            return Ok(metadata);
+        }
+    }
     let executable = process_path(front).unwrap_or_default();
     let allowed = request["allowedApps"]
         .as_array()
@@ -680,10 +742,12 @@ unsafe fn dispatch(
     request: Value,
 ) -> Result<Value, String> {
     if request["op"] == "selection" {
-        mouse.allowed = request["allowedApps"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
+        mouse.configure(
+            request["allowedApps"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default(),
+        );
     }
     match request["op"].as_str().unwrap_or("") {
         "validateApplications" => {

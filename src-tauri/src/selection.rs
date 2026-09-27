@@ -17,6 +17,13 @@ pub struct Gate {
 }
 
 impl Gate {
+    /// Native adapters may skip AX/UIA when there is no fresh gesture, pending
+    /// debounce, or result to follow. The consumed ID survives clears so an old
+    /// selection cannot restart translation after the cheap idle path runs.
+    pub fn poll_hint(&self) -> Value {
+        serde_json::json!({"gestureId": self.seen_gesture, "pending": self.candidate.is_some()})
+    }
+
     /// Consume gestures even in ignored contexts. A filename/input selection
     /// must not become eligible later merely because focus moves to prose.
     /// Retaining the consumed ID on clear also suppresses restored old ranges.
@@ -162,5 +169,23 @@ mod tests {
         }
         assert!(useful_text("Retry"));
         assert!(useful_text("Please check src/main.rs."));
+    }
+
+    #[test]
+    fn idle_hint_preserves_consumed_gesture_and_pending_debounce() {
+        let mut gate = Gate::default();
+        assert_eq!(gate.poll_hint(), json!({"gestureId":"", "pending":false}));
+        let now = Instant::now();
+        assert!(!gate.observe(&sample(), "a", now, false));
+        assert_eq!(
+            gate.poll_hint(),
+            json!({"gestureId":"app:1", "pending":true})
+        );
+        assert!(gate.observe(&sample(), "a", now + Duration::from_millis(700), false));
+        gate.clear();
+        assert_eq!(
+            gate.poll_hint(),
+            json!({"gestureId":"app:1", "pending":false})
+        );
     }
 }

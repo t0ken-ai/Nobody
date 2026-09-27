@@ -42,6 +42,27 @@ pub struct Record {
     pub paths: Vec<PathBuf>,
     pub error: String,
 }
+impl Record {
+    /// UI refreshes need only 180 characters, not a temporary clone of up to
+    /// 1 MiB of text per record. Retain the complete body only in the service;
+    /// explicit copy/full-text commands continue reading that original value.
+    pub fn preview(&self) -> Self {
+        Self {
+            id: self.id.clone(),
+            peer_id: self.peer_id.clone(),
+            peer_name: self.peer_name.clone(),
+            direction: self.direction.clone(),
+            phase: self.phase.clone(),
+            created_at: self.created_at,
+            bytes: self.bytes,
+            total: self.total,
+            text: self.text.chars().take(180).collect(),
+            files: self.files.clone(),
+            paths: self.paths.clone(),
+            error: self.error.clone(),
+        }
+    }
+}
 /// Feature-owned directory; all filenames supplied to read/write are internal constants.
 #[derive(Clone)]
 pub struct Store {

@@ -50,8 +50,9 @@ export function transferMarkup() {
   <dialog id="lan-text-dialog" class="lan-text-dialog"><div class="lan-section-heading"><h2>文字内容</h2><button id="lan-text-close" class="button small">关闭</button></div><pre id="lan-full-text"></pre><button id="lan-text-copy" class="button primary">复制文字</button></dialog>`;
 }
 
-/** Mount once to preserve drafts across navigation. Snapshot refreshes coalesce
- * progress events; hidden views continue to receive pairing requests. */
+/** Mount once to preserve drafts across navigation. Hidden views retain only
+ * an invalidation flag; the native service still receives files and pairing
+ * events can reopen this page without any background snapshot/DOM refresh. */
 export function mountTransfer(root: HTMLElement, showPage: () => void) {
   const $ = <T extends HTMLElement = HTMLElement>(id: string) => root.querySelector<T>(`#${id}`)!;
   let current: Snapshot | undefined;
@@ -67,6 +68,10 @@ export function mountTransfer(root: HTMLElement, showPage: () => void) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let refreshing = false;
   let refreshAgain = false;
+  let visible = !root.hidden && !document.hidden;
+  let stale = true;
+  let peersKey = "";
+  let recordsKey = "";
   const input = $<HTMLTextAreaElement>("lan-text");
   /** Keep feature feedback local and use textContent for errors from the OS/peer. */
   const note = (message: string, error = false) => {
@@ -103,6 +108,9 @@ export function mountTransfer(root: HTMLElement, showPage: () => void) {
    * name. OS icons reflect metadata only and never grant identity or trust. */
   function renderPeers() {
     if (!current) return;
+    const key = JSON.stringify([selected, current.settings.enabled, current.peers]);
+    if (key === peersKey) { composeState(); return; }
+    peersKey = key;
     $("lan-count").textContent = `${current.peers.filter(p => p.online).length} 在线`;
     $("lan-peers").innerHTML = current.peers.length ? current.peers.map(p => `<div class="lan-peer ${selected === p.id ? "selected" : ""} ${p.online ? "" : "offline"}"><button class="lan-peer-select" data-lan-peer="${esc(p.id)}" aria-pressed="${selected === p.id}" title="设备标识 ${esc(p.id.slice(0, 12))}"><span class="lan-device-icon" aria-hidden="true">${platformIcon(p.platform)}</span><span><strong>${esc(p.name)}</strong><small>${esc(p.platform)} · ${p.online ? "在线" : "离线"} · ${p.trusted ? "已信任" : "待信任"}</small></span><i aria-hidden="true"></i></button>${p.trusted ? `<div class="lan-peer-actions"><button class="lan-forget button small" data-lan-forget="${esc(p.id)}" title="后续连接需重新确认信任">解除信任</button></div>` : ""}</div>`).join("") : `<div class="lan-empty"><span aria-hidden="true">⌁</span><strong>${current.settings.enabled ? "正在寻找附近电脑" : "互传已关闭"}</strong><p>${current.settings.enabled ? "在另一台电脑打开 TranslateMe" : "在下方设置中开启互传"}</p></div>`;
     composeState();
@@ -123,6 +131,11 @@ export function mountTransfer(root: HTMLElement, showPage: () => void) {
     $<HTMLButtonElement>("lan-next").disabled = page === pageCount - 1;
     $<HTMLButtonElement>("lan-clear").disabled = !current?.records.some(finished);
     const visible = records.slice(page * recordsPerPage, (page + 1) * recordsPerPage);
+    // Progress elsewhere must not replace this page's unchanged record nodes
+    // or steal focus from a record action the user is about to activate.
+    const key = JSON.stringify([filter, visible]);
+    if (key === recordsKey) return;
+    recordsKey = key;
     $("lan-records").innerHTML = records.length ? visible.map(r => {
       const received = r.direction === "received";
       const percent = r.total ? Math.min(100, r.bytes / r.total * 100) : r.phase === "completed" ? 100 : 0;
@@ -172,14 +185,27 @@ export function mountTransfer(root: HTMLElement, showPage: () => void) {
   /** Only one snapshot can be in flight, preventing old responses from
    * overwriting newer job state during bursts of progress/discovery events. */
   async function refresh() {
+    stale = true;
+    if (!visible) return;
     if (refreshing) { refreshAgain = true; return; }
     refreshing = true;
-    try { current = await command<Snapshot>("get_transfer_state"); render(); }
-    catch (e) { $("lan-status").textContent = "互传未就绪"; note(String(e), true); }
+    stale = false;
+    try {
+      current = await command<Snapshot>("get_transfer_state");
+      // A native response may complete after navigation/close-to-tray.
+      if (visible) render(); else stale = true;
+    }
+    catch (e) {
+      stale = true;
+      if (visible) { $("lan-status").textContent = "互传未就绪"; note(String(e), true); }
+    }
     finally { refreshing = false; if (refreshAgain) { refreshAgain = false; schedule(); } }
   }
-  /** Coalesce discovery/progress bursts; Rust retains all state between refreshes. */
-  function schedule() { if (!timer) timer = setTimeout(() => { timer = undefined; void refresh(); }, 180); }
+  /** Coalesce bursts only while visible. Native jobs never depend on this timer. */
+  function schedule() {
+    stale = true;
+    if (visible && !timer) timer = setTimeout(() => { timer = undefined; void refresh(); }, 180);
+  }
   /** Deduplicate by local path and cap the draft before server-side revalidation. */
   async function addFiles(next: PickedFile[]) {
     for (const file of next) if (!files.some(f => f.path === file.path)) files.push(file);
@@ -209,6 +235,9 @@ export function mountTransfer(root: HTMLElement, showPage: () => void) {
   $("lan-prev").onclick = () => { page = Math.max(0, page - 1); renderRecords(); };
   $("lan-next").onclick = () => { page += 1; renderRecords(); };
   const dialog = $<HTMLDialogElement>("lan-text-dialog");
+  // Full messages can be much larger than list previews. Closing the dialog
+  // releases that extra DOM copy; the service remains the source of truth.
+  dialog.addEventListener("close", () => { $("lan-full-text").textContent = ""; });
   $("lan-text-close").onclick = () => dialog.close();
   $("lan-text-copy").onclick = () => void run(async () => { await command("copy_text", { text: $("lan-full-text").textContent ?? "" }); note("文字已复制。"); });
   /** Delegation keeps file/record buttons functional across snapshot refreshes. */
@@ -248,5 +277,18 @@ export function mountTransfer(root: HTMLElement, showPage: () => void) {
     $("lan-peers").innerHTML = `<div class="lan-empty"><span aria-hidden="true">⌁</span><strong>设备会自动出现在这里</strong><p>发现、配对和传输需要打开桌面应用。</p></div>`;
     note("当前是界面预览，没有连接真实设备。"); composeState(); renderRecords();
   }
-  return { show() { if (isTauri()) { schedule(); void command("mark_transfer_seen").catch(() => {}); } } };
+  return {
+    /** Called for both page navigation and native window visibility. Catch up
+     * once on return; repeated visible signals cannot start duplicate refreshes. */
+    setVisible(value: boolean) {
+      if (visible === value) return;
+      visible = value;
+      if (!visible) {
+        clearTimeout(timer); timer = undefined;
+      } else if (isTauri()) {
+        if (stale || !current) schedule();
+        void command("mark_transfer_seen").catch(() => {});
+      }
+    },
+  };
 }

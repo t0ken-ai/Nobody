@@ -93,12 +93,17 @@ let llmDraftRevision = 0;
 let demos: ReturnType<typeof mountDemos> | undefined;
 const shortcutRecorders: ReturnType<typeof mountShortcutRecorder>[] = [];
 let transfer: ReturnType<typeof mountTransfer> | undefined;
+let setMainVisible: (visible: boolean) => void = () => {};
+let popupResizeFrame = 0;
 
 /** Measure content, not the current window height, to avoid a resize feedback
  * loop. Native placement limits the final height to the available screen space. */
 function resizePopup() {
-  if (!popup || !isTauri()) return;
-  requestAnimationFrame(() => {
+  if (!popup || !isTauri() || popupResizeFrame) return;
+  // ResizeObserver and translation events can arrive together. One measurement
+  // per frame prevents redundant native resizes and layout feedback work.
+  popupResizeFrame = requestAnimationFrame(() => {
+    popupResizeFrame = 0;
     const header = document.querySelector<HTMLElement>(".popup-header")!;
     const footer = document.querySelector<HTMLElement>(".popup-footer")!;
     const content = $("popup-content");
@@ -198,17 +203,28 @@ if (popup) {
   $<HTMLSelectElement>("target").value = "en";
   demos = mountDemos();
   demos.setWriteShortcut("CommandOrControl+Shift+E");
+  let activeView = "demos";
+  let mainVisible = true;
+  /** Native close-to-tray is not consistently reflected in document.hidden
+   * across WebKit/WebView2. Combine both signals without unmounting drafts. */
+  function updateVisibility() {
+    const visible = mainVisible && !document.hidden;
+    demos?.setVisible(visible && activeView === "demos");
+    transfer?.setVisible(visible && activeView === "transfer");
+  }
+  setMainVisible = visible => { mainVisible = visible; updateVisibility(); };
+  document.addEventListener("visibilitychange", updateVisibility);
   /** Keep each view mounted so navigation preserves draft text and unsaved
    * settings. Only the visible tutorial may consume animation frames. */
   function navigate(view: "demos" | "workbench" | "settings" | "transfer") {
+    activeView = view;
     for (const name of ["demos", "workbench", "transfer", "settings"]) {
       $(name).hidden = name !== view;
       $(`nav-${name}`).classList.toggle("active", name === view);
       if (name === view) $(`nav-${name}`).setAttribute("aria-current", "page");
       else $(`nav-${name}`).removeAttribute("aria-current");
     }
-    demos?.setVisible(view === "demos");
-    if (view === "transfer") transfer?.show();
+    updateVisibility();
     $("permission-banner").hidden = view === "transfer";
     notice("");
   }
@@ -422,16 +438,32 @@ function sameApplication(existing: Application, chosen: LocalApplication): boole
 // Icons are disposable presentation data. Cache for five minutes in this
 // window only, including in-flight requests; never add them to Settings.
 const applicationIconCache = new Map<string, { until: number; value: Promise<string | null> }>();
+let applicationIconExpiry: ReturnType<typeof setTimeout> | undefined;
+
+/** A single one-shot expiry releases promise-held PNGs even if settings are
+ * never opened again. No interval or per-icon timer runs in the background. */
+function expireApplicationIcons() {
+  clearTimeout(applicationIconExpiry);
+  applicationIconExpiry = undefined;
+  const now = Date.now();
+  for (const [key, entry] of applicationIconCache) if (entry.until <= now) applicationIconCache.delete(key);
+  if (applicationIconCache.size) {
+    const next = Math.min(...Array.from(applicationIconCache.values(), entry => entry.until));
+    applicationIconExpiry = setTimeout(expireApplicationIcons, Math.max(1, next - now));
+  }
+}
 
 /** Batch missing icons without delaying settings rendering. Position-based
  * replies bind to the original row nodes, so removal/reordering while awaiting
  * native Shell work cannot attach another application's icon to a new row. */
 function loadApplicationIcons(apps: Application[], marks: HTMLElement[]) {
   const keys = apps.map(app => JSON.stringify([status?.platform, app]));
+  // The draft is capped at 100 apps. Removed rows must not leave a second,
+  // larger cache behind during repeated add/remove sessions.
+  for (const key of applicationIconCache.keys()) if (!keys.includes(key)) applicationIconCache.delete(key);
   const missing = apps.map((app, index) => ({ app, key: keys[index] }))
     .filter(({ key }) => !applicationIconCache.has(key) || applicationIconCache.get(key)!.until < Date.now());
   if (missing.length) {
-    if (applicationIconCache.size > 200) applicationIconCache.clear();
     const response = call<{ icons: (string | null)[] }>("get_application_icons", { apps: missing.map(item => item.app) })
       .then(result => result?.icons ?? []).catch(() => []);
     missing.forEach(({ key }, index) => applicationIconCache.set(key, {
@@ -444,6 +476,7 @@ function loadApplicationIcons(apps: Application[], marks: HTMLElement[]) {
       }),
     }));
   }
+  expireApplicationIcons();
   keys.forEach((key, index) => {
     const mark = marks[index];
     void applicationIconCache.get(key)?.value.then(data => {
@@ -620,6 +653,7 @@ if (isTauri()) {
     const result = await call<Result | null>("get_last_result");
     if (result) display(result);
   } else {
+    await listen<boolean>("main-window-visible", event => setMainVisible(event.payload));
     await refresh();
     window.addEventListener("focus", () => {
       void refresh(false);

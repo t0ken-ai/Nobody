@@ -443,11 +443,24 @@ fn watch_selection(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut gate = selection::Gate::default();
         let mut generation = 0;
+        let mut selection_settings = None;
+        let mut native_configured = false;
         loop {
             tokio::time::sleep(Duration::from_millis(350)).await;
             let state = app.state::<AppState>();
-            let s = preferences(&state);
             let current_generation = state.generation.load(Ordering::SeqCst);
+            // The idle loop needs only selection policy. Do not repeatedly
+            // clone LLM prompts/endpoints or serialize the whole settings form.
+            if selection_settings.is_none() || generation != current_generation {
+                let s = state.settings.lock().unwrap();
+                let allowed = if s.auto_selection {
+                    json!(s.automatic_apps)
+                } else {
+                    json!([])
+                };
+                selection_settings = Some((s.auto_selection, s.target_language.clone(), allowed));
+                native_configured = false;
+            }
             if generation != current_generation {
                 gate.clear();
                 state.popover.lock().unwrap().clear();
@@ -460,19 +473,21 @@ fn watch_selection(app: tauri::AppHandle) {
                 continue;
             }
             let tracking = state.popover.lock().unwrap().tracking();
-            // Continue metadata polling when disabled: it updates the native
-            // allowlist and lets a previously visible result follow its source.
-            let allowed = if s.auto_selection {
-                s.automatic_apps.clone()
-            } else {
-                vec![]
-            };
-            let Ok(selected) = state
+            let (automatic, target, allowed) = selection_settings.as_ref().unwrap();
+            // Send a disabled allowlist once so native monitors stop, then skip
+            // bridge work unless a manual result still needs source tracking.
+            if !automatic && tracking.is_null() && native_configured {
+                gate.clear();
+                continue;
+            }
+            let selected = state
                 .platform
                 .call(json!({"op":"selection", "whole":false,
-                "ticket":false, "geometry":true, "allowedApps":allowed, "tracking":tracking}))
-                .await
-            else {
+                "ticket":false, "geometry":true, "allowedApps":allowed,
+                "tracking":tracking, "poll":gate.poll_hint()}))
+                .await;
+            native_configured = selected.is_ok();
+            let Ok(selected) = selected else {
                 gate.clear();
                 state.popover.lock().unwrap().selection_lost();
                 sync_popover(&app, &state);
@@ -483,20 +498,26 @@ fn watch_selection(app: tauri::AppHandle) {
                 gate.clear();
                 continue;
             }
-            let identity = popover::identity(&selected, &s.target_language);
+            let identity = popover::identity(&selected, target);
             let text = selected["text"].as_str().unwrap_or("");
             if text.trim().is_empty() || selected["ignored"] == true {
                 // Consume an ignored gesture before clearing its UI, so moving
                 // from a filename/input to a body cannot reuse that gesture.
                 gate.observe(&selected, &identity, std::time::Instant::now(), true);
-                state.popover.lock().unwrap().clear();
+                // Metadata-only idle responses must not dismiss an explicit
+                // diagnostic that has no captured source to follow.
+                if selected["reason"] == "idle" {
+                    state.popover.lock().unwrap().selection_lost();
+                } else {
+                    state.popover.lock().unwrap().clear();
+                }
                 sync_popover(&app, &state);
                 continue;
             }
             let anchor = popover::anchor(&app, &selected);
             state.popover.lock().unwrap().observe(&identity, anchor);
             sync_popover(&app, &state);
-            if !s.auto_selection {
+            if !automatic {
                 gate.clear();
                 continue;
             }
@@ -616,12 +637,40 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // Explicit visibility complements WebKit/WebView2 document state:
+            // closing to the tray pauses view work, never the native services.
+            if window.label() == "main"
+                && matches!(
+                    event,
+                    tauri::WindowEvent::Focused(_) | tauri::WindowEvent::Resized(_)
+                )
+            {
+                let visible =
+                    window.is_visible().unwrap_or(true) && !window.is_minimized().unwrap_or(false);
+                let _ = window.emit("main-window-visible", visible);
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 if window.label() == "result" {
                     window.state::<AppState>().popover.lock().unwrap().dismiss();
                 }
+                if window.label() == "main" {
+                    let _ = window.emit("main-window-visible", false);
+                }
                 let _ = window.hide();
+                #[cfg(target_os = "macos")]
+                if window.label() == "main" {
+                    // The native adapter rechecks visibility after an idle
+                    // delay. Reopening promptly must not trigger allocator work.
+                    let app = window.app_handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        let _ = app
+                            .state::<AppState>()
+                            .platform
+                            .call(json!({"op":"background"}))
+                            .await;
+                    });
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
