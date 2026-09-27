@@ -551,6 +551,8 @@ async fn listener_failure_is_visible_and_stale_failure_is_ignored() {
 /// exact session id/code in approval.json after the operator compares the GUI.
 /// Uses no real keychain; only synthetic reply files live in a temporary folder.
 /// status.json exposes public pairing/job data; stop.txt or ten minutes ends it.
+/// send-again.txt requests another synthetic reply to the same paired UI, so
+/// background receiving can be checked after the app window is closed.
 #[tokio::test]
 #[ignore]
 async fn native_ui_diagnostic_peer() {
@@ -589,7 +591,7 @@ async fn native_ui_diagnostic_peer() {
         }
         // Reply once to the explicitly paired GUI, only after real receipt and
         // discovery of its address; no other discovered device is contacted.
-        if !replied {
+        if !replied || control.join("send-again.txt").exists() {
             if let Some(record) = snapshot
                 .records
                 .iter()
@@ -602,10 +604,29 @@ async fn native_ui_diagnostic_peer() {
                 {
                     peer.service.send(record.peer_id.clone(), "本机测试设备已收到。\nKeep the current data visible.\ngit diff --check".into(), vec![binary.clone()]).unwrap();
                     replied = true;
+                    let _ = fs::remove_file(control.join("send-again.txt"));
                 }
             }
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
     peer.service.stop();
+}
+
+/// UI adapters may run outside Tokio. Reject that misuse before reserving a job
+/// instead of panicking (the native Send button previously hit this boundary).
+#[test]
+fn send_without_runtime_returns_an_error_and_leaves_no_job() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (a, b) = runtime.block_on(async { (fixture("A").await, fixture("B").await) });
+    advertise(&a, &b);
+    assert!(a
+        .service
+        .send(b.identity.id.clone(), "runtime check".into(), vec![])
+        .is_err());
+    assert!(a.service.snapshot().records.is_empty());
+    assert!(a.service.inner.lock().unwrap().active.is_empty());
 }

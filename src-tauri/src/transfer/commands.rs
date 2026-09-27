@@ -108,8 +108,10 @@ pub async fn retry_transfer_service(
     main_service(&window, &state)?.retry().await
 }
 /// Start a job for a discovered identity and native file paths, returning its record id.
+/// This command must be async: a synchronous Tauri command runs on the UI thread,
+/// outside Tokio, where scheduling the network job previously panicked on Send.
 #[tauri::command]
-pub fn send_transfer(
+pub async fn send_transfer(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, LanState>,
     peer_id: String,

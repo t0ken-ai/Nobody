@@ -654,6 +654,10 @@ impl TransferService {
             .unwrap()
             .clone()
             .ok_or("设备身份尚未准备好。")?;
+        // Fail before creating a job if a future adapter accidentally calls this
+        // from a plain UI/OS thread. The Tauri send command enters Tokio for us.
+        let runtime = tokio::runtime::Handle::try_current()
+            .map_err(|_| "无法启动传输任务：请重试或重启应用。".to_string())?;
         let (id, cancel) = self.begin(peer.id.clone(), peer.name.clone(), false)?;
         self.update(&id, |r| {
             r.text = text.clone();
@@ -662,7 +666,7 @@ impl TransferService {
         });
         let service = self.clone();
         let job = id.clone();
-        tokio::spawn(async move {
+        runtime.spawn(async move {
             let result = tokio::select! {_ = cancel.cancelled()=>Err("传输已取消。".into()),r=transport::send(service.clone(),identity,&job,peer,text,paths,metadata)=>r};
             service.finish(&job, result);
         });
