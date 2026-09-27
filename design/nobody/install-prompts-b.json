@@ -1,0 +1,30 @@
+{
+  "tool": "Built-in image_gen.imagegen",
+  "accepted": {
+    "menu": {
+      "referenced_image_paths": [
+        "/Users/censor/Downloads/TranslateMe/design/nobody/exports/b-symbol-black-transparent.png"
+      ],
+      "transparent_background": true,
+      "prompt": "Export a small-size optically adjusted version of the EXACT approved black Nobody B symbol from the reference for a 22-pixel macOS menu bar template icon. Preserve the distinct circular head and original asymmetric lowercase n torso, thin left leg, broad right body, left-offset arch opening downwards; no redesign. Only adjustment: increase transparent vertical gap between head and torso to approximately 9 percent of total symbol height so they remain visibly separate at 16 pixels. Preserve head diameter and torso outline/proportions. Symbol centered, total symbol height 84 percent of square canvas, width proportional, generous clear sides. Pure black RGB(0,0,0), opaque solid interior, clean antialiased edges, completely transparent background AND transparent arch opening. No white field, no gray, no colored pixels, no background texture, no glows, no tile, no words, no outline, no extra features. A single flat black alpha-mask silhouette PNG, suitable for an OS template image; retain this exact B identity."
+    },
+    "desktopSource": "exports/b-app-icon.png"
+  },
+  "discarded": {
+    "roundedAttempt": {
+      "referenced_image_paths": [
+        "/Users/censor/Downloads/TranslateMe/design/nobody/exports/b-app-icon.png"
+      ],
+      "transparent_background": true,
+      "prompt": "Production export of the EXACT approved Nobody B app icon in the reference. Preserve the same white faceless circular head, asymmetric lowercase n body, thin left leg, thick right side, left-offset arch opening, original proportions and placement. Do not redesign the symbol. Make a macOS/Windows desktop icon: place the entire existing forest-green square artwork onto a single rounded-square tile with smooth Apple-style continuous corners, inset 6 percent from all canvas edges, transparent outside the tile. The white symbol should remain in exactly the same relative position and proportions within the tile. Flat forest green tile, warm white symbol, no lettering, no extra icons, no border, no gradients, no glow, no shadow outside, no checkerboard. Square high-resolution PNG RGBA. This is only a corner-mask and desktop safe-margin export of the selected reference, not a new design."
+    },
+    "roundedRetry": {
+      "referenced_image_paths": [
+        "/Users/censor/Downloads/TranslateMe/design/nobody/exports/b-app-icon.png"
+      ],
+      "transparent_background": true,
+      "prompt": "Make a production desktop app icon from this exact Nobody B reference. Keep the white faceless head and asymmetric n body exactly unchanged. The icon is a SOLID OPAQUE FOREST GREEN ROUNDED SQUARE TILE. Every pixel INSIDE that rounded square MUST be fully opaque, including the green regions far left and far right of the white symbol, and the green arch opening. Do NOT remove any interior green and do NOT fade any green to transparent. Transparency is ONLY in the exterior corners OUTSIDE the rounded square. The green tile occupies 88% of the square canvas, centered, with a 6% transparent exterior margin. The existing reference square and mark scale together to fit this tile. Uniform flat green fill, NO gradients, NO lighting, NO shadows, NO fades, NO bevels. Keep all green a single opaque color #244F40. Keep the white mark a single opaque warm-white color #F6F4EC. Clearly bounded opaque tile, alpha=255 everywhere on tile, alpha=0 only outside tile. No checkerboard or words. Preserve symbol geometry. Output one square PNG."
+    }
+  },
+  "reason": "Rounded transparent exports contained transparent holes inside the green tile; do not install. Preserve the previously approved opaque desktop artwork."
+}

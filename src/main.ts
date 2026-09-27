@@ -6,6 +6,10 @@ import { demoMarkup, mountDemos } from "./demos";
 import { desktopPlatform, mountShortcutRecorder } from "./shortcuts";
 import { transferMarkup, mountTransfer } from "./transfer";
 
+// Vite packages this small raster locally; no external image request or
+// full-resolution design board is loaded into the resident webview.
+const nobodyIcon = new URL("./assets/nobody-icon.png", import.meta.url).href;
+
 /** Custom entries come only from the native app picker. Presets can remain
  * configured before installation; their identity never depends on a label. */
 type LocalApplication = { name: string; path: string; platform: string; bundleId: string };
@@ -141,7 +145,7 @@ if (popup) {
   document.body.classList.add("popup");
   document.documentElement.classList.add("popup-root");
   $("app").innerHTML =
-    `<header class="popup-header" title="拖动顶部，移动译文"><div class="mini-brand">${icon("translate")} <strong id="popup-language">译文</strong></div><span class="drag-grip" aria-hidden="true">⠿</span><button id="hide" class="icon-button" aria-label="关闭译文" title="关闭 · Esc">${icon("close")}</button></header>
+    `<header class="popup-header" title="拖动顶部，移动译文"><div class="mini-brand"><span class="nobody-symbol" aria-hidden="true"></span> <strong id="popup-language">译文</strong></div><span class="drag-grip" aria-hidden="true">⠿</span><button id="hide" class="icon-button" aria-label="关闭译文" title="关闭 · Esc">${icon("close")}</button></header>
     <div id="notice" class="notice" role="status" hidden></div><main class="popup-body"><div id="popup-content"><div id="popup-text" class="popup-text">选中文字，即可在附近阅读译文。</div></div></main>
     <footer class="popup-footer"><span id="popup-origin">TranslateMe</span><span id="popup-message" class="sr-only">原文保持不变</span><button id="popup-copy" class="popup-copy" disabled title="复制译文">${icon("copy")}复制</button></footer>`;
   $("hide").onclick = () => {
@@ -164,7 +168,7 @@ if (popup) {
 } else {
   $("app").innerHTML = `
     <main class="workspace">
-      <header class="topbar"><div class="brand"><span class="brand-symbol">${icon("translate")}</span><span>TranslateMe<span class="brand-divider">/</span><small>语言之间，思路不断</small></span></div><nav aria-label="主导航"><button id="nav-demos" class="nav-item active" aria-current="page">使用演示</button><button id="nav-workbench" class="nav-item">翻译工作台</button><button id="nav-transfer" class="nav-item">局域网互传</button><button id="nav-settings" class="nav-item" aria-label="偏好设置">${icon("settings")}</button></nav></header>
+      <header class="topbar"><div class="brand"><span class="brand-symbol"><img src="${nobodyIcon}" alt="Nobody" width="33" height="33" /></span><span>TranslateMe<span class="brand-divider">/</span><small>语言之间，思路不断</small></span></div><nav aria-label="主导航"><button id="nav-demos" class="nav-item active" aria-current="page">使用演示</button><button id="nav-workbench" class="nav-item">翻译工作台</button><button id="nav-transfer" class="nav-item">局域网互传</button><button id="nav-settings" class="nav-item" aria-label="偏好设置">${icon("settings")}</button></nav></header>
       <div class="page-content">
         <section id="demos">
           <div class="heading-row"><div><div class="eyebrow"><span></span> THINK IN YOUR LANGUAGE</div><h1>想法，不必绕远路<span>。</span></h1><p class="subtitle">写下你想说的，读懂你想看的。</p></div></div>

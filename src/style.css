@@ -62,7 +62,19 @@ body:not(.popup) { background: radial-gradient(ellipse at 20% 5%, #eef5ee 0, tra
 .topbar { height: 78px; display: flex; align-items: center; justify-content: space-between; padding: 0 36px; border-bottom: 1px solid #294c3910; background: #ffffff65; }
 .brand { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 650; letter-spacing: -.6px; }
 .brand-symbol { width: 33px; height: 33px; display: grid; place-items: center; background: #244a3b; color: #fafdfb; border-radius: 10px; box-shadow: inset 0 1px 1px #ffffff38; }
-.brand-symbol svg { width: 22px; height: 22px; }
+.brand-symbol { overflow: hidden; flex-shrink: 0; }
+.brand-symbol img { display: block; width: 100%; height: 100%; }
+/* Use the approved bitmap's alpha as a mask: the small mark follows the
+   existing popup text color in both appearances without a second asset. */
+.nobody-symbol {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  background: currentColor;
+  -webkit-mask: url("./assets/nobody-symbol.png") center / contain no-repeat;
+  mask: url("./assets/nobody-symbol.png") center / contain no-repeat;
+}
 .brand small { font-size: 10px; color: #85918b; font-weight: 400; letter-spacing: .4px; }
 .brand-divider { margin: 0 12px; font-weight: 300; color: #cbd2cc; }
 .topbar nav { display: flex; gap: 5px; align-items: center; }

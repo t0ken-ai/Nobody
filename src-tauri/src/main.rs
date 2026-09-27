@@ -602,8 +602,17 @@ fn main() {
             )?;
             let quit = tauri::menu::MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = tauri::menu::Menu::with_items(app, &[&open, &quit])?;
-            tauri::tray::TrayIconBuilder::with_id("main-tray")
-                .icon(app.default_window_icon().unwrap().clone())
+            let tray = tauri::tray::TrayIconBuilder::with_id("main-tray");
+            // macOS tints this alpha-only B mark for light/dark menu bars.
+            // Its wider head gap is intentional at status-item size. Windows
+            // keeps the colored tile so it works on either taskbar color.
+            #[cfg(target_os = "macos")]
+            let tray = tray
+                .icon(tauri::include_image!("icons/tray-template.png"))
+                .icon_as_template(true);
+            #[cfg(not(target_os = "macos"))]
+            let tray = tray.icon(tauri::include_image!("icons/32x32.png"));
+            tray
                 .tooltip("TranslateMe · 写英文，读母语")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
