@@ -29,7 +29,7 @@ macOS 可能要求允许 TranslateMe 从钥匙串读取它自己的局域网设�
 
 第一版限制为 1 MiB 文字、每次 100 个文件、单文件 20 GiB、合计 40 GiB。不支持目录、符号链接或不兼容 Windows 的文件名。接收文件校验后落盘，同名自动另存；发送中修改源文件会报错。发送失败或取消后保留草稿；成功后仅清空未再编辑的草稿。收到文件不会自动执行。
 
-互传记录与翻译历史分开：保留最近 100 条、总文字最多 8 MiB，清除记录不删除收到的文件。设置、信任和记录统一位于 `~/.translateme/transfer/`；设备私钥仍单独保存在系统凭据库。首次升级先校验并复制旧应用配置目录下的互传数据，再原子切换到新目录，旧目录保留作备份。旧文件及历史记录中的文件路径保持原位；原接收目录为旧默认值时改用新默认目录，自选目录保持不变。已存在的新目录不会被旧记录重新覆盖。移除或替换该私钥会变成新设备，需要重新信任。通知受系统策略控制，即使通知未显示也可在记录中查看。
+互传记录与翻译历史分开：保留最近 100 条、总文字最多 8 MiB，清除记录不删除收到的文件。设置、信任和记录统一位于 `~/.translateme/transfer/`；本地设备私钥与新信任记录保存在 `transfer/device/`，不访问系统凭据库。旧 `transfer/trusted.json` 原位保留作备份，但不沿用其信任，升级后需要重新配对。首次升级先校验并复制旧应用配置目录下的互传数据，再原子切换到新目录，旧目录保留作备份。旧文件及历史记录中的文件路径保持原位；原接收目录为旧默认值时改用新默认目录，自选目录保持不变。已存在的新目录不会被旧记录重新覆盖。新身份目录中私钥缺失或损坏时拒绝启动互传，不会静默生成替代身份。通知受系统策略控制，即使通知未显示也可在记录中查看。
 
 发送的原文件不会复制到应用数据目录；这里只有记录和收到的文件。互传记录 JSON（包含文字）和接收文件不会因为与 `llm.db` 同目录就变成 SQLCipher 加密文件；本地目录由账户权限保护。
 
@@ -60,9 +60,11 @@ Windows 版本目前使用自定义 LLM。没有添加未经确认的云端中�
 
 浮窗定位取决于源应用暴露的选区坐标。坐标可靠时随选区滚动、离屏后收起；首次拿不到有效坐标时固定在触发时的鼠标附近，不跟着鼠标乱跑。macOS 配置了跨桌面及全屏辅助窗口行为；不同应用的坐标质量、多显示器实机表现及 Windows 磨砂效果仍需逐项验收。
 
-**LLM 设置**：填写基础地址（例如 `https://your-provider.example/v1`）、模型 ID 和 API Key。完整 `/chat/completions` 地址也可使用。本机模型支持 `http://localhost:11434/v1` 等回环地址；远程服务要求 HTTPS。密钥留空保留已存密钥，勾选删除才会移除。密钥按接口地址隔离，使用 `rusqlite` + `bundled-sqlcipher` 加密保存在 `~/.translateme/llm.db`（Windows 为用户主目录下的 `.translateme\llm.db`）。最后保存的引擎、接口、模型和提示词一起保存；API Key 不返回前端。
+**LLM 设置**：填写基础地址（例如 `https://your-provider.example/v1`）、模型 ID 和 API Key。完整 `/chat/completions` 地址也可使用。本机模型支持 `http://localhost:11434/v1` 等回环地址；远程服务要求 HTTPS。密钥留空保留已存密钥，勾选删除才会移除。密钥按接口地址隔离，使用 `rusqlite` + `bundled-sqlcipher` 加密保存在 `~/.translateme/llm/llm.db`（Windows 为用户主目录下的 `.translateme\llm\llm.db`）。最后保存的引擎、接口、模型和提示词一起保存；API Key 不返回前端。
 
-数据库的随机解密密钥由 macOS Keychain / Windows Credential Manager 保管，无需恢复口令。保留用户主目录和系统凭据的本机同账户重装可自动恢复；**只有数据库文件不能换机解锁**，重装操作系统或清空凭据也不在自动恢复范围内。旧版 endpoint 密钥按需迁移，成功提交后才清理旧条目；删除会保留空标记，防止旧凭据复活。解密失败不重置原文件。
+数据库的随机解密密钥保存在同一目录的 `master.key`，不使用 macOS Keychain 或 Windows Credential Manager，也不读取、导入或删除旧系统凭据。macOS 目录/文件权限为 `0700`/`0600`；Windows 使用仅授予当前用户的受保护文件 ACL。保留整个 `llm/` 目录即可重装恢复；**只备份数据库不能解锁，拿到整个目录的人可以解密 API Key**。本地加密不等于独立的凭据保险库。
+
+旧版 `~/.translateme/llm.db` 原位保留，作为未解锁的备份，新版不会改写它；API Key 需要重新填写。接口、模型和提示词仍可从旧的非密钥设置文件读取。新目录的密钥缺失、格式错误或数据库损坏均报错，不自动重置。局域网信任和密钥的恢复范围详见 [本地凭据存储](docs/local-storage.md)。
 
 设置页提供 **Z.ai GLM-5.3**（`https://api.z.ai/api/coding/paas/v4`、`glm-5.3`）和 **Kimi K3**（`https://api.kimi.com/coding/v1`、`k3`）预设。前者使用 Z.ai 海外 Coding Plan；不会自动改用按量接口。没有已保存密钥时，可读取应用进程继承的 `ZAI_KEY` / `KIMI_KEY`，仅限对应官方 Coding Plan 地址。应用不读取 shell 配置文件；从 Finder 启动通常不会继承终端环境变量，可在 API Key 字段填写并保存。
 
@@ -114,7 +116,7 @@ node scripts/local-build.mjs dev
 - `src-tauri/src/main.rs`：快捷键、选区防抖、请求互斥、结果展示与设置协调。
 - `selection.rs`：自动划词的鼠标动作消费、稳定等待和无须翻译内容过滤；独立于引擎与界面。
 - `popover.rs`：浮窗的选区生命周期、位置和尺寸计算；独立于翻译引擎，不存储翻译历史。
-- `config.rs`：设置验证、旧凭据迁移与设置保存协调；`llm_store.rs`：SQLCipher 数据库与系统保管的主密钥；`document.rs`：代码片段保护。
+- `config.rs`：设置验证与保存协调；`llm_store.rs`：SQLCipher 数据库与本地主密钥；`private_files.rs`：本地私密文件权限和原子发布；`document.rs`：代码片段保护。
 - `translation.rs`：系统 / LLM 翻译和输出验证。
 - `transfer/`：独立管理 LAN 发现、TLS 身份、配对、文件流和收件记录；`commands.rs` 仅为主窗口提供适配，`src/transfer.ts` 持有页面草稿。
 - `platform/`、`native/macos/Native.swift`：本机应用选择与身份匹配、系统取词及坐标、回填、系统翻译和 macOS 浮窗行为；不依赖前端 DOM。

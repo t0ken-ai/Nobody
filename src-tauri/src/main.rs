@@ -6,6 +6,7 @@ mod document;
 mod llm_store;
 mod platform;
 mod popover;
+mod private_files;
 mod selection;
 mod transfer;
 mod translation;
@@ -184,7 +185,7 @@ async fn save_settings(
             return Err(format!("快捷键注册失败，已恢复原快捷键：{error}"));
         }
     }
-    // Keychain and SQLCipher KDF/I/O are blocking; keep them off the UI executor.
+    // SQLCipher KDF and local-file I/O are blocking; keep them off the UI executor.
     let path = state.settings_path.clone();
     let next = settings.clone();
     let old = previous.clone();

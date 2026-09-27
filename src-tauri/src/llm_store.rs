@@ -1,20 +1,17 @@
 //! Reinstall-stable LLM storage, independent of UI, translation and LAN identity.
-//! SQLCipher encrypts ~/.translateme/llm.db; a random master key stays in the OS
-//! credential store. Neither reinstall nor a missing key ever resets an old DB.
+//! SQLCipher and its local key live together in ~/.translateme/llm/. The old
+//! root-level llm.db remains untouched as a backup; it is never unlocked or
+//! imported. Missing/corrupt keys in the new store never reset existing data.
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
-    fs,
     path::{Path, PathBuf},
     sync::{LazyLock, Mutex},
 };
 
 static STORE: LazyLock<Result<Store, String>> = LazyLock::new(|| {
     let home = dirs::home_dir().ok_or("无法找到用户主目录。")?;
-    Ok(Store {
-        path: home.join(".translateme/llm.db"),
-        connection: Mutex::new(None),
-    })
+    Ok(Store::at(&home.join(".translateme")))
 });
 
 /// Only the last LLM profile is restored. Automatic capture permissions and LAN
@@ -27,7 +24,7 @@ pub struct Profile {
     pub prompt: String,
 }
 
-/// A NULL row is a deliberate deletion, preventing a legacy key from reappearing.
+/// A NULL row is a deliberate deletion. No legacy credential fallback exists.
 pub enum KeyState {
     Missing,
     Saved(Option<String>),
@@ -43,76 +40,70 @@ fn store() -> Result<&'static Store, String> {
     STORE.as_ref().map_err(Clone::clone)
 }
 
-/// Missing databases do not prompt for Keychain access. Creation happens only
-/// on an explicit save or successful migration, never merely when testing a key.
+/// A fresh subdirectory separates the new local store from the unreadable old
+/// OS-protected database. Reads never create a key/database; only Save does.
 impl Store {
+    fn at(root: &Path) -> Self {
+        Self {
+            path: root.join("llm/llm.db"),
+            connection: Mutex::new(None),
+        }
+    }
+
     fn access<T>(
         &self,
         create: bool,
         operation: impl FnOnce(Option<&mut Connection>) -> Result<T, String>,
     ) -> Result<T, String> {
         let mut connection = self.connection.lock().map_err(|_| "LLM 存储暂不可用。")?;
-        if connection.is_none() && (create || self.path.exists()) {
-            let exists = self.path.exists();
-            let entry = keyring::Entry::new("app.translateme.llm-storage", "sqlcipher-master-v1")
-                .map_err(|_| "无法打开系统凭据库。")?;
-            let existing = match entry.get_password() {
-                Ok(key) => Some(key),
-                Err(keyring::Error::NoEntry) => None,
-                Err(_) => return Err("无法读取 LLM 数据库解密密钥，请允许系统凭据库访问。".into()),
-            };
-            let key = master_key(exists, existing.as_deref())?;
-            if existing.is_none() {
-                entry
-                    .set_password(&key)
-                    .map_err(|_| "无法保存数据库解密密钥，未创建数据库。")?;
-                // Windows/macOS credentials must persist before writing ciphertext.
-                if entry.get_password().ok().as_deref() != Some(&key) {
-                    return Err("系统凭据库未能持久保存解密密钥，未创建数据库。".into());
-                }
-            }
+        let exists = self
+            .path
+            .try_exists()
+            .map_err(|_| "无法检查 LLM 数据库。")?;
+        if connection.is_none() && (create || exists) {
+            let key = local_key(&self.path, exists)?;
             *connection = Some(open_encrypted(&self.path, &key)?);
         }
         operation(connection.as_mut())
     }
 }
 
-/// A surviving DB without its matching OS credential is recoverable ciphertext,
-/// not an empty installation. Never generate a replacement key in that case.
-fn master_key(database_exists: bool, saved: Option<&str>) -> Result<String, String> {
-    match saved {
-        Some(key) if !key.is_empty() => Ok(key.into()),
-        // An empty-but-existing OS item is corrupt state, not a newly generated
-        // key. Refuse it even before DB creation rather than lose the next open.
-        Some(_) => Err("系统凭据中的 LLM 解密密钥为空，未创建或改动数据库。".into()),
-        None if database_exists => Err(
-            "LLM 数据库仍在，但本机解密密钥不可用。请恢复原系统账户的凭据；原文件未改动。".into(),
-        ),
-        _ => Ok(rand::random::<[u8; 32]>()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect()),
+/// Persist a random key before creating ciphertext. A complete directory backup
+/// is sufficient to reopen; losing just master.key is an error, never a reset.
+fn local_key(database: &Path, database_exists: bool) -> Result<String, String> {
+    let key_path = database.with_file_name("master.key");
+    let existing = crate::private_files::read(&key_path, 64)?;
+    let bytes = match existing {
+        Some(bytes) => bytes,
+        None if database_exists => {
+            return Err("LLM 本地解密密钥缺失，请恢复 llm/master.key；数据库保持不变。".into())
+        }
+        None => {
+            let key = rand::random::<[u8; 32]>()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            crate::private_files::write_new(&key_path, key.as_bytes())?;
+            // Another process may have published first. Always use the durable
+            // winner, never the unpersisted candidate from this process.
+            crate::private_files::read(&key_path, 64)?.ok_or("无法读取已保存的本地解密密钥。")?
+        }
+    };
+    if bytes.len() != 64 || !bytes.iter().all(u8::is_ascii_hexdigit) {
+        return Err("LLM 本地解密密钥格式异常；原文件保持不变。".into());
     }
+    String::from_utf8(bytes).map_err(|_| "LLM 本地解密密钥格式异常。".into())
 }
 
 /// Set the key before touching schema, verify the linked library is SQLCipher,
 /// then authenticate existing pages. A wrong key/corrupt file must never migrate.
 fn open_encrypted(path: &Path, key: &str) -> Result<Connection, String> {
     let parent = path.parent().ok_or("LLM 数据库目录不可用。")?;
-    fs::create_dir_all(parent).map_err(|_| "无法创建 ~/.translateme 目录。")?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
-            .map_err(|_| "无法保护数据库目录。")?;
-        let file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .map_err(|_| "无法打开 LLM 数据库文件。")?;
-        file.set_permissions(fs::Permissions::from_mode(0o600))
-            .map_err(|_| "无法保护数据库文件。")?;
-    }
+    crate::private_files::directory(parent)?;
+    // Create the empty DB inside the private directory, then protect it before
+    // SQLite writes its first page. Existing symlinks are rejected as well.
+    crate::private_files::write_new(path, &[])?;
+    crate::private_files::protect(path)?;
     let mut db = Connection::open(path).map_err(|_| "无法打开 LLM 数据库。")?;
     db.busy_timeout(std::time::Duration::from_secs(5))
         .map_err(|_| "无法设置数据库等待时间。")?;
@@ -172,7 +163,7 @@ pub fn get_key(endpoint: &str) -> Result<KeyState, String> {
     })
 }
 
-/// Preserve the distinction between missing (may migrate) and deleted (must not).
+/// Preserve the distinction between an unconfigured endpoint and explicit deletion.
 fn read_key(db: &Connection, endpoint: &str) -> Result<KeyState, String> {
     let value: Option<Option<String>> = db
         .query_row(
@@ -217,13 +208,14 @@ fn write(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
-    /// Tests use an isolated random credential, never the user's real Keychain.
+    /// Tests use isolated files, never the user's real data directory.
     #[test]
     fn encrypted_file_reopens_and_wrong_key_does_not_modify_it() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("llm.db");
-        let key = master_key(false, None).unwrap();
+        let key = local_key(&path, false).unwrap();
         let mut db = open_encrypted(&path, &key).unwrap();
         let profile = Profile {
             engine: "llm".into(),
@@ -251,7 +243,7 @@ mod tests {
         }
         assert!(open_encrypted(&path, "wrong credential").is_err());
         assert_eq!(before, fs::read(&path).unwrap());
-        // Simulate reinstall: all in-memory state is gone; original file + OS key survive.
+        // Simulate reinstall: in-memory state is gone; the DB + local key survive.
         let mut reopened = open_encrypted(&path, &key).unwrap();
         assert!(
             matches!(read_key(&reopened, &profile.endpoint).unwrap(), KeyState::Saved(Some(s)) if s=="secret-test-key")
@@ -274,16 +266,43 @@ mod tests {
         );
     }
 
+    /// The old database is retained byte-for-byte, and new keys restore from
+    /// local files alone. Loss/corruption cannot create a replacement key.
     #[test]
-    fn lost_master_key_never_generates_a_replacement_for_existing_data() {
-        assert!(master_key(true, None).is_err());
-        assert!(master_key(true, Some("")).is_err());
-        assert!(master_key(false, Some("")).is_err());
-        assert_eq!(master_key(true, Some("existing")).unwrap(), "existing");
-        assert_ne!(
-            master_key(false, None).unwrap(),
-            master_key(false, None).unwrap()
-        );
+    fn local_store_preserves_legacy_and_reopens_without_os_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let legacy = dir.path().join("llm.db");
+        fs::write(&legacy, b"unreadable legacy ciphertext").unwrap();
+        let store = Store::at(dir.path());
+        store
+            .access(false, |db| {
+                assert!(db.is_none());
+                Ok(())
+            })
+            .unwrap();
+        assert!(!store.path.exists());
+        store
+            .access(true, |db| {
+                write(db.unwrap(), None, Some(("endpoint", "local-only-key")))
+            })
+            .unwrap();
+        drop(store);
+        let store = Store::at(dir.path());
+        store.access(false, |db| {
+            assert!(matches!(read_key(db.unwrap(), "endpoint")?, KeyState::Saved(Some(key)) if key == "local-only-key"));
+            Ok(())
+        }).unwrap();
+        let path = store.path.clone();
+        drop(store);
+        let before = fs::read(&path).unwrap();
+        let key_path = path.with_file_name("master.key");
+        fs::remove_file(&key_path).unwrap();
+        assert!(Store::at(dir.path()).access(true, |_| Ok(())).is_err());
+        assert!(!key_path.exists());
+        fs::write(&key_path, b"corrupt").unwrap();
+        assert!(Store::at(dir.path()).access(true, |_| Ok(())).is_err());
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert_eq!(fs::read(&legacy).unwrap(), b"unreadable legacy ciphertext");
     }
 
     #[test]

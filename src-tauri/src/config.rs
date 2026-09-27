@@ -198,36 +198,13 @@ pub fn write(path: &Path, settings: &Settings) -> Result<(), String> {
     fs::rename(temporary, path).map_err(|e| e.to_string())
 }
 
-fn credential(endpoint: &str) -> Result<keyring::Entry, String> {
-    let account = endpoint_url(endpoint)?.to_string();
-    keyring::Entry::new("app.translateme.desktop", &account)
-        .map_err(|e| format!("无法打开系统凭据库：{e}"))
-}
-/// Legacy entries remain readable for migration. Never enumerate unrelated OS
-/// credentials; only the exact configured endpoint can be imported.
-fn legacy_key(endpoint: &str) -> Result<Option<String>, String> {
-    match credential(endpoint)?.get_password() {
-        Ok(key) => Ok(Some(key)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(format!("无法读取 API Key：{e}")),
-    }
-}
-/// An explicit SQL NULL is deletion, not permission to resurrect a legacy key.
-/// Successful migrations copy first, then best-effort remove the old credential.
+/// Read only the endpoint's local SQLCipher entry. Missing/deleted entries
+/// stay empty: there is no OS-credential migration or cleanup on any path.
 pub fn get_key(endpoint: &str) -> Result<Option<String>, String> {
     let normalized = endpoint_url(endpoint)?.to_string();
     match crate::llm_store::get_key(&normalized)? {
         crate::llm_store::KeyState::Saved(key) => Ok(key),
-        crate::llm_store::KeyState::Missing => {
-            let key = legacy_key(endpoint)?;
-            if let Some(key) = &key {
-                crate::llm_store::save(None, Some((&normalized, key)))?;
-                if let Ok(entry) = credential(endpoint) {
-                    let _ = entry.delete_credential();
-                }
-            }
-            Ok(key)
-        }
+        crate::llm_store::KeyState::Missing => Ok(None),
     }
 }
 
@@ -259,17 +236,7 @@ pub fn persist(
     } else {
         Some(endpoint_url(&settings.endpoint)?.to_string())
     };
-    let mut key = draft_key.map(|key| key.trim().to_owned());
-    if key.is_none() {
-        if let Some(endpoint) = &normalized {
-            if matches!(
-                crate::llm_store::get_key(endpoint)?,
-                crate::llm_store::KeyState::Missing
-            ) {
-                key = legacy_key(endpoint)?;
-            }
-        }
-    }
+    let key = draft_key.map(|key| key.trim().to_owned());
     write(path, settings)?;
     if has_profile {
         let profile = crate::llm_store::Profile {
@@ -285,13 +252,6 @@ pub fn persist(
                 Ok(()) => Err(error),
                 Err(_) => Err(format!("{error} 非密钥设置未能回滚，请重新打开设置检查。")),
             };
-        }
-        if key.is_some() {
-            if let Some(endpoint) = normalized {
-                if let Ok(entry) = credential(&endpoint) {
-                    let _ = entry.delete_credential();
-                }
-            }
         }
     }
     Ok(())

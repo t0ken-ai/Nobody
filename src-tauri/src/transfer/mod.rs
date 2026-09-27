@@ -150,7 +150,9 @@ impl TransferService {
             name,
             receive_dir: default_receive_dir,
         });
-        let trusted = store.read("trusted.json")?.unwrap_or_default();
+        // The previous identity remains in OS credentials and is not imported.
+        // Keep its trusted.json as a backup; local identities start untrusted.
+        let trusted = store.read("device/trusted.json")?.unwrap_or_default();
         let mut records: Vec<Record> = store.read("inbox.json")?.unwrap_or_default();
         for r in &mut records {
             if !["completed", "failed", "cancelled"].contains(&r.phase.as_str()) {
@@ -247,14 +249,15 @@ impl TransferService {
         }
         self.emit("changed");
     }
-    /// Load the stable credential before binding and publishing a single runtime.
+    /// Load the local private identity before binding and publishing a runtime.
     async fn start_inner(self: &Service) -> Result<(), String> {
         let existing = self.identity.lock().unwrap().clone();
+        let identity_dir = self.store.dir.clone();
         let identity = if let Some(id) = existing {
             id
         } else {
             Arc::new(
-                tokio::task::spawn_blocking(Identity::load)
+                tokio::task::spawn_blocking(move || Identity::load(&identity_dir))
                     .await
                     .map_err(|e| e.to_string())??,
             )
@@ -376,7 +379,7 @@ impl TransferService {
         let mut trusted = i.trusted.clone();
         trusted.retain(|p| p.id != peer.id);
         trusted.push(peer);
-        self.store.write("trusted.json", &trusted)?;
+        self.store.write("device/trusted.json", &trusted)?;
         i.trusted = trusted;
         Ok(())
     }
@@ -386,7 +389,7 @@ impl TransferService {
         let mut i = self.inner.lock().unwrap();
         let mut trusted = i.trusted.clone();
         trusted.retain(|t| t.id != peer_id);
-        self.store.write("trusted.json", &trusted)?;
+        self.store.write("device/trusted.json", &trusted)?;
         i.trusted = trusted;
         for job in i.active.values().filter(|j| j.peer_id == peer_id) {
             job.cancel.cancel();

@@ -9,9 +9,9 @@ use rustls::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
+use std::{fs, path::Path, sync::Arc};
 
-/// Credential-store payload only; never serialize this into app files or UI events.
+/// Private local-file payload only; never expose private bytes in UI or events.
 #[derive(Serialize, Deserialize)]
 struct SavedIdentity {
     cert: Vec<u8>,
@@ -31,24 +31,34 @@ pub fn fingerprint(bytes: &[u8]) -> String {
         .collect()
 }
 impl Identity {
-    /// The OS credential entry is separate from endpoint-scoped LLM credentials.
-    /// Failure does not create an unpersisted identity that changes next launch.
-    pub fn load() -> Result<Self, String> {
-        let entry = keyring::Entry::new("app.translateme.desktop.lan", "device-identity-v1")
-            .map_err(|e| e.to_string())?;
-        let saved = match entry.get_secret() {
-            Ok(bytes) => {
-                serde_json::from_slice(&bytes).map_err(|_| "设备身份损坏，请检查系统凭据库。")?
+    /// A new device directory is published only after its private identity is
+    /// durable. Existing directories with missing/bad keys fail closed, rather
+    /// than silently becoming a different device. The old OS item is untouched.
+    pub fn load(store_dir: &Path) -> Result<Self, String> {
+        let dir = store_dir.join("device");
+        if !dir.try_exists().map_err(|_| "无法检查本地设备身份目录。")? {
+            crate::private_files::directory(store_dir)?;
+            let staging = tempfile::Builder::new()
+                .prefix(".device-")
+                .tempdir_in(store_dir)
+                .map_err(|_| "无法准备本地设备身份。")?;
+            crate::private_files::directory(staging.path())?;
+            let identity = Self::generate()?;
+            let bytes =
+                serde_json::to_vec(&identity.saved).map_err(|_| "无法编码本地设备身份。")?;
+            crate::private_files::write_new(&staging.path().join("identity.json"), &bytes)?;
+            // Complete directories are nonempty, so competing initializations
+            // cannot replace a winner. Read that winner after a rename race.
+            if fs::rename(staging.path(), &dir).is_err() && !dir.is_dir() {
+                return Err("无法保存本地设备身份，尚未启动互传。".into());
             }
-            Err(keyring::Error::NoEntry) => {
-                let value = Self::generate()?.saved;
-                entry
-                    .set_secret(&serde_json::to_vec(&value).map_err(|e| e.to_string())?)
-                    .map_err(|e| format!("无法保存设备身份：{e}"))?;
-                value
-            }
-            Err(e) => return Err(format!("无法读取设备身份：{e}")),
-        };
+            crate::private_files::sync_directory(store_dir)?;
+        }
+        crate::private_files::protect(&dir)?;
+        let bytes = crate::private_files::read(&dir.join("identity.json"), 16384)?
+            .ok_or("本地设备私钥缺失，请恢复 transfer/device 备份；不会自动生成新身份。")?;
+        let saved: SavedIdentity = serde_json::from_slice(&bytes)
+            .map_err(|_| "本地设备身份损坏，请恢复 transfer/device 备份。")?;
         let result = Self {
             id: fingerprint(&saved.cert),
             saved,
@@ -57,7 +67,7 @@ impl Identity {
         result.server_config()?;
         Ok(result)
     }
-    /// Also used by isolated two-peer tests; tests never read real credentials.
+    /// Generate a candidate identity; callers must persist it before discovery.
     pub fn generate() -> Result<Self, String> {
         let certified = rcgen::generate_simple_self_signed(vec!["translateme.local".into()])
             .map_err(|e| e.to_string())?;
@@ -226,5 +236,35 @@ impl ClientCertVerifier for PeerVerifier {
     }
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
         self.schemes()
+    }
+}
+
+#[cfg(test)]
+mod local_identity_tests {
+    use super::*;
+
+    /// Restart reads the exact persisted identity; old trust is retained only
+    /// as a backup. Losing the private key cannot silently mint a new device.
+    #[test]
+    fn local_identity_is_stable_and_never_resets_after_key_loss() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("trusted.json"), b"legacy trust backup").unwrap();
+        let first = Identity::load(root.path()).unwrap();
+        let second = Identity::load(root.path()).unwrap();
+        assert_eq!(first.id, second.id);
+        let file = root.path().join("device/identity.json");
+        let original = fs::read(&file).unwrap();
+        fs::write(&file, b"corrupt").unwrap();
+        assert!(Identity::load(root.path()).is_err());
+        assert_eq!(fs::read(&file).unwrap(), b"corrupt");
+        fs::remove_file(&file).unwrap();
+        assert!(Identity::load(root.path()).is_err());
+        assert!(!file.exists());
+        fs::write(&file, original).unwrap();
+        assert_eq!(Identity::load(root.path()).unwrap().id, first.id);
+        assert_eq!(
+            fs::read(root.path().join("trusted.json")).unwrap(),
+            b"legacy trust backup"
+        );
     }
 }

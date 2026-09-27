@@ -34,6 +34,6 @@
 
 本次短测支持空闲 CPU 降低的结论；整应用内存与旧版约 184 MiB 接近，不能声称内存占用已经下降。延迟回收只请求归还分配器闲置页，无法据不同启动的数值单独归因；主要内存改进是限制积压和缓存生命周期。真实 Codex 前台划词和快捷键回填已请用户复测，尚未收到本轮结果。
 
-最终 Apple Silicon 测试包：`artifacts/TranslateMe-macOS-arm64.zip`，SHA-256 为 `bff7edfa22feff8d055d880b890211fd4eabc3b43edf7603c3bd2bdc32390835`。应用继续在后台运行。
+本轮性能采样所用 Apple Silicon 构建的 SHA-256 为 `bff7edfa22feff8d055d880b890211fd4eabc3b43edf7603c3bd2bdc32390835`。`artifacts/TranslateMe-macOS-arm64.zip` 会随新版更新，后续无系统凭据库版本的校验值见 [本地凭据存储](local-storage.md)。
 
 原始采样、调用栈、模拟 IPC 夹具与结果保存在本机忽略目录 `artifacts/performance/`。复测时先完成系统认证，确认程序和局域网服务就绪，再分别记录可见页面、关闭主窗口、真实翻译后的后台状态；将主进程及 WebKit 进程分别统计。短测不替代长时间运行或 Windows 真机测试。

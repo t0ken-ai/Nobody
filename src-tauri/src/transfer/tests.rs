@@ -1,5 +1,5 @@
 //! Real loopback TLS tests use isolated identities/directories, never the user's
-//! Keychain or inbox. They exercise the full trust gate and streaming protocol.
+//! home directory or inbox. They exercise the full trust gate and streaming protocol.
 use super::*;
 use protocol::{read_frame, write_frame, FileMeta, Frame};
 use std::{fs, net::SocketAddr};
@@ -31,7 +31,7 @@ async fn fixture(name: &str) -> Fixture {
         Arc::new(|_| {}),
     )
     .unwrap();
-    let identity = Arc::new(Identity::generate().unwrap());
+    let identity = Arc::new(Identity::load(&service.store.dir).unwrap());
     *service.identity.lock().unwrap() = Some(identity.clone());
     {
         let mut i = service.inner.lock().unwrap();
@@ -202,7 +202,7 @@ async fn first_pairing_streams_text_files_and_preserves_existing_names() {
     assert_eq!(
         b.service
             .store
-            .read::<Vec<TrustedPeer>>("trusted.json")
+            .read::<Vec<TrustedPeer>>("device/trusted.json")
             .unwrap()
             .unwrap()
             .len(),
@@ -658,4 +658,52 @@ fn send_without_runtime_returns_an_error_and_leaves_no_job() {
         .is_err());
     assert!(a.service.snapshot().records.is_empty());
     assert!(a.service.inner.lock().unwrap().active.is_empty());
+}
+
+/// Upgrading without OS credentials preserves history/settings but never grants
+/// a newly generated local identity the old installation's saved trust.
+#[test]
+fn local_identity_upgrade_leaves_old_trust_and_history_untouched() {
+    let root = tempfile::tempdir().unwrap();
+    let store = Store::new(root.path().join("transfer")).unwrap();
+    store
+        .write(
+            "trusted.json",
+            &[TrustedPeer {
+                id: "old-peer".into(),
+                name: "Other Mac".into(),
+                platform: "macOS".into(),
+            }],
+        )
+        .unwrap();
+    store.write("inbox.json", &Vec::<Record>::new()).unwrap();
+    let before = fs::read(store.dir.join("trusted.json")).unwrap();
+    let history = fs::read(store.dir.join("inbox.json")).unwrap();
+    let service = TransferService::new(
+        store.dir.clone(),
+        root.path().join("received"),
+        Arc::new(|_| {}),
+    )
+    .unwrap();
+    assert!(!service.is_trusted("old-peer"));
+    let identity = Identity::load(&store.dir).unwrap();
+    service
+        .trust(TrustedPeer {
+            id: "new-peer".into(),
+            name: "Confirmed Mac".into(),
+            platform: "macOS".into(),
+        })
+        .unwrap();
+    drop(service);
+    let restored = TransferService::new(
+        store.dir.clone(),
+        root.path().join("received"),
+        Arc::new(|_| {}),
+    )
+    .unwrap();
+    assert!(restored.is_trusted("new-peer"));
+    assert!(!restored.is_trusted("old-peer"));
+    assert_eq!(Identity::load(&store.dir).unwrap().id, identity.id);
+    assert_eq!(fs::read(store.dir.join("trusted.json")).unwrap(), before);
+    assert_eq!(fs::read(store.dir.join("inbox.json")).unwrap(), history);
 }
