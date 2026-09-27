@@ -542,6 +542,28 @@ fn watch_selection(app: tauri::AppHandle) {
     });
 }
 
+/// Frame the approved B silhouette for macOS's fixed 18 pt status-item image.
+/// The 64 px export contains a 43 px tall antialiased mark; fitting the full
+/// canvas made it only ~11.5 pt tall. This 47 px square keeps two clear pixels
+/// around the visible edges and raises the solid mark to ~15.7 pt. Only the
+/// tray's in-memory presentation is cropped once at startup; the source art,
+/// popup, app icon and Windows tray retain their existing size and pixels.
+#[cfg(target_os = "macos")]
+fn macos_menu_bar_icon() -> tauri::image::Image<'static> {
+    let source = tauri::include_image!("icons/tray-template.png");
+    // A differently sized future export needs its own framing review. Prefer
+    // its safe full canvas to slicing with coordinates meant for this artwork.
+    if source.width() != 64 || source.height() != 64 {
+        return source;
+    }
+    let mut pixels = Vec::with_capacity(47 * 47 * 4);
+    for row in 9..56 {
+        let start = (row * 64 + 9) * 4;
+        pixels.extend_from_slice(&source.rgba()[start..start + 47 * 4]);
+    }
+    tauri::image::Image::new_owned(pixels, 47, 47)
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -608,7 +630,7 @@ fn main() {
             // keeps the colored tile so it works on either taskbar color.
             #[cfg(target_os = "macos")]
             let tray = tray
-                .icon(tauri::include_image!("icons/tray-template.png"))
+                .icon(macos_menu_bar_icon())
                 .icon_as_template(true);
             #[cfg(not(target_os = "macos"))]
             let tray = tray.icon(tauri::include_image!("icons/32x32.png"));

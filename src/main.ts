@@ -168,7 +168,7 @@ if (popup) {
 } else {
   $("app").innerHTML = `
     <main class="workspace">
-      <header class="topbar"><div class="brand"><span class="brand-symbol"><img src="${nobodyIcon}" alt="Nobody" width="33" height="33" /></span><span>Nobody<span class="brand-divider">/</span><small>语言之间，思路不断</small></span></div><nav aria-label="主导航"><button id="nav-demos" class="nav-item active" aria-current="page">使用演示</button><button id="nav-workbench" class="nav-item">翻译工作台</button><button id="nav-transfer" class="nav-item">局域网互传</button><button id="nav-settings" class="nav-item" aria-label="偏好设置">${icon("settings")}</button></nav></header>
+      <header class="topbar"><div class="brand"><span class="brand-symbol"><img src="${nobodyIcon}" alt="Nobody" width="33" height="33" /></span><span>Nobody<span class="brand-divider">/</span><small>语言不同，价值不减</small></span></div><nav aria-label="主导航"><button id="nav-demos" class="nav-item active" aria-current="page">使用演示</button><button id="nav-workbench" class="nav-item">翻译工作台</button><button id="nav-transfer" class="nav-item">局域网互传</button><button id="nav-settings" class="nav-item" aria-label="偏好设置">${icon("settings")}</button></nav></header>
       <div class="page-content">
         <section id="demos">
           <div class="heading-row"><div><div class="eyebrow"><span></span> THINK IN YOUR LANGUAGE</div><h1>想法，不必绕远路<span>。</span></h1><p class="subtitle">写下你想说的，读懂你想看的。</p></div></div>
