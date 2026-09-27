@@ -1,6 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./style.css";
+import { demoMarkup, mountDemos } from "./demos";
 
 type Settings = {
   engine: "system" | "llm";
@@ -69,6 +70,7 @@ const popup = new URLSearchParams(location.search).get("view") === "result";
 let status: Status | undefined;
 let latest: Result | undefined;
 let busy = false;
+let demos: ReturnType<typeof mountDemos> | undefined;
 
 /** Measure content, not the current window height, to avoid a resize feedback
  * loop. Native placement limits the final height to the available screen space. */
@@ -107,17 +109,6 @@ function notice(message: string, error = false) {
 function label(code: string) {
   return languages.find(([value]) => value === code)?.[1] ?? code;
 }
-function shortcutLabel(value: string) {
-  return value
-    .replace(
-      "CommandOrControl",
-      navigator.platform.includes("Mac") ? "⌘" : "Ctrl",
-    )
-    .replace("Super", "⌘")
-    .replace("Shift", "⇧")
-    .replace("Alt", "⌥")
-    .replaceAll("+", " ");
-}
 
 if (popup) {
   document.body.classList.add("popup");
@@ -145,32 +136,25 @@ if (popup) {
   new ResizeObserver(resizePopup).observe($("popup-content"));
 } else {
   $("app").innerHTML = `
-    <aside class="sidebar">
-      <div class="brand"><span class="brand-symbol">${icon("translate")}</span><span>TranslateMe<small>为思考保留母语</small></span></div>
-      <div class="nav-label">工作空间</div>
-      <nav><button id="nav-workbench" class="nav-item active">${icon("translate")}翻译工作台</button><button id="nav-settings" class="nav-item">${icon("settings")}偏好设置</button></nav>
-      <div class="sidebar-bottom"><span class="status-dot"></span>在你的工作流里<small>选词 · 翻译 · 继续思考</small><div class="version">TranslateMe / 0.1.0</div></div>
-    </aside>
     <main class="workspace">
-      <header class="topbar"><span id="breadcrumb">工作空间 <b>/</b> 翻译工作台</span><span class="local-badge">● 桌面助手</span></header>
+      <header class="topbar"><div class="brand"><span class="brand-symbol">${icon("translate")}</span><span>TranslateMe<span class="brand-divider">/</span><small>语言之间，思路不断</small></span></div><nav aria-label="主导航"><button id="nav-demos" class="nav-item active" aria-current="page">使用演示</button><button id="nav-workbench" class="nav-item">翻译工作台</button><button id="nav-settings" class="nav-item" aria-label="偏好设置">${icon("settings")}</button></nav></header>
       <div class="page-content">
-        <section id="workbench">
-          <div class="heading-row"><div><div class="eyebrow">LESS FRICTION. MORE FLOW.</div><h1>写英文，读母语。</h1><p class="subtitle">用熟悉的语言表达，把翻译留给一个快捷键。</p></div><span class="hero-symbol">A<span>文</span></span></div>
-          <div class="shortcut-grid">
-            <div class="shortcut-card"><span class="shortcut-icon">↗</span><div><strong>写入英文</strong><p>翻译选区或当前输入框</p></div><kbd id="write-shortcut">⌘ ⇧ E</kbd></div>
-            <div class="shortcut-card"><span class="shortcut-icon">↙</span><div><strong>划词阅读</strong><p>选中文字，自动显示译文</p></div><kbd id="read-shortcut">⌘ ⇧ D</kbd></div>
-          </div>
-          <div id="permission-banner" class="permission-banner"><div><strong id="permission-title">正在检查系统连接…</strong><p id="permission-description">翻译工作台无需辅助功能权限，跨应用取词需要开启。</p></div><button id="permission" class="button small">开启辅助功能</button></div>
+        <section id="demos">
+          <div class="heading-row"><div><div class="eyebrow"><span></span> THINK IN YOUR LANGUAGE</div><h1>想法，不必绕远路<span>。</span></h1><p class="subtitle">写下你想说的，读懂你想看的。</p></div><span class="demo-badge"><span></span>交互演示</span></div>
+          <div class="demo-grid">${demoMarkup()}</div>
+          <div class="demo-footnote"><span>固定样例 · 阅读演示为开启自动划词后的效果</span><button id="try-workbench" class="text-button">去翻译一段 ${icon("arrow")}</button></div>
+        </section>
+        <section id="workbench" hidden>
+          <div class="heading-row"><div><div class="eyebrow">A SPACE FOR YOUR WORDS</div><h1>让想法，跨过语言。</h1><p class="subtitle">粘贴一段文字，在这里完成翻译。</p></div></div>
           <div class="editor-toolbar"><div><span class="section-title">试译一段</span><button id="sample" class="text-button">使用当前聊天示例 ↗</button></div><span id="engine-badge" class="engine-badge">Apple 系统翻译</span></div>
           <div class="translation-grid">
             <section class="editor-pane"><header><span>自动识别语言</span><span class="muted">原文</span></header><textarea id="source" aria-label="原文" spellcheck="false" placeholder="在这里输入，或直接在其他应用中使用快捷键…"></textarea><footer><span id="count">0 / 16,000</span><button id="clear" class="text-button">清空</button></footer></section>
-            <section class="editor-pane output-pane"><header><select id="target" aria-label="翻译目标语言">${languageOptions}</select><span class="muted">译文</span></header><textarea id="output" aria-label="译文" readonly placeholder="让语言退到身后，让想法向前。"></textarea><footer><span id="result-meta">代码片段原样保留</span><button id="copy" class="text-button" disabled>${icon("copy")}复制译文</button></footer></section>
+            <section class="editor-pane output-pane"><header><select id="target" aria-label="翻译目标语言">${languageOptions}</select><span class="muted">译文</span></header><textarea id="output" aria-label="译文" readonly placeholder="译文会显示在这里。"></textarea><footer><span id="result-meta">代码片段原样保留</span><button id="copy" class="text-button" disabled>${icon("copy")}复制译文</button></footer></section>
           </div>
           <div class="action-row"><span class="privacy-note" id="engine-note">系统翻译在本机处理；首次使用可能需要下载语言包。</span><button id="translate" class="button primary">翻译成英文 ${icon("arrow")}</button></div>
-          <div class="reading-demo"><span class="eyebrow">READING MODE</span><p>You can think in your own language and keep your coding workflow in English.</p><span>在其他应用中选中类似的英文句子，即可查看母语译文。</span></div>
         </section>
         <section id="settings" hidden>
-          <div class="eyebrow">MAKE IT YOURS</div><h1>偏好设置</h1><p class="subtitle">选一个翻译引擎，剩下的交给快捷键。</p>
+          <div class="eyebrow">MAKE IT YOURS</div><h1>让它，更合你的习惯。</h1><p class="subtitle">翻译引擎、阅读语言和触发方式，都在这里。</p>
           <form id="settings-form">
             <div class="setting-card"><h2>翻译引擎</h2><div class="engine-choices"><label><input type="radio" name="engine" value="system" checked /><span><strong>系统翻译</strong><small>macOS · 本机处理 · 无需 API Key</small></span></label><label><input type="radio" name="engine" value="llm" /><span><strong>自定义 LLM</strong><small>macOS / Windows · 兼容 Chat Completions 接口</small></span></label></div>
             <p id="system-help" class="field-help">系统会在需要时提示下载语言包。</p>
@@ -179,21 +163,29 @@ if (popup) {
             <div class="action-row"><span class="privacy-note">不保存翻译历史</span><button class="button primary" type="submit" id="save">保存设置 ${icon("check")}</button></div>
           </form>
         </section>
+        <div id="permission-banner" class="permission-banner"><span class="connection-dot" aria-hidden="true"></span><div><strong id="permission-title">正在检查系统连接…</strong><p id="permission-description">跨应用取词需要辅助功能权限。</p></div><button id="permission" class="button small">开启辅助功能</button><span class="app-version">TranslateMe 0.1</span></div>
         <div id="notice" class="notice" role="status" hidden></div>
       </div>
     </main>`;
   $<HTMLSelectElement>("target").value = "en";
-  function navigate(settings: boolean) {
-    $("workbench").hidden = settings;
-    $("settings").hidden = !settings;
-    $("nav-settings").classList.toggle("active", settings);
-    $("nav-workbench").classList.toggle("active", !settings);
-    $("breadcrumb").textContent =
-      `工作空间 / ${settings ? "偏好设置" : "翻译工作台"}`;
+  demos = mountDemos();
+  demos.setWriteShortcut("CommandOrControl+Shift+E");
+  /** Keep each view mounted so navigation preserves draft text and unsaved
+   * settings. Only the visible tutorial may consume animation frames. */
+  function navigate(view: "demos" | "workbench" | "settings") {
+    for (const name of ["demos", "workbench", "settings"]) {
+      $(name).hidden = name !== view;
+      $(`nav-${name}`).classList.toggle("active", name === view);
+      if (name === view) $(`nav-${name}`).setAttribute("aria-current", "page");
+      else $(`nav-${name}`).removeAttribute("aria-current");
+    }
+    demos?.setVisible(view === "demos");
     notice("");
   }
-  $("nav-workbench").onclick = () => navigate(false);
-  $("nav-settings").onclick = () => navigate(true);
+  $("nav-demos").onclick = () => navigate("demos");
+  $("nav-workbench").onclick = () => navigate("workbench");
+  $("nav-settings").onclick = () => navigate("settings");
+  $("try-workbench").onclick = () => navigate("workbench");
   const source = $<HTMLTextAreaElement>("source");
   const target = $<HTMLSelectElement>("target");
   const count = () => {
@@ -351,8 +343,7 @@ async function refresh(initializeForm = true) {
       : "开启辅助功能后，才能读取选区并将英文回填到原输入框。";
     $("permission").hidden = status.accessibility;
     $("permission-banner").classList.toggle("ready", status.accessibility);
-    $("write-shortcut").textContent = shortcutLabel(s.writeShortcut);
-    $("read-shortcut").textContent = shortcutLabel(s.readShortcut);
+    demos?.setWriteShortcut(s.writeShortcut);
     $("engine-badge").textContent =
       s.engine === "system" ? "Apple 系统翻译" : `LLM · ${s.model}`;
     $("engine-note").textContent =
@@ -418,4 +409,9 @@ if (isTauri()) {
   }
 } else {
   notice("界面预览模式 · 请启动桌面应用体验系统翻译与快捷键。");
+  if (!popup) {
+    $("permission-title").textContent = "桌面预览";
+    $("permission-description").textContent = "动画可直接体验，真实翻译请打开桌面应用。";
+    $("permission").hidden = true;
+  }
 }
