@@ -76,6 +76,240 @@ impl Store {
     }
 }
 
+/// Switch LAN metadata to the stable home directory before opening the service.
+/// Copy/validate into a sibling staging directory, then publish in one rename;
+/// old data stays available for rollback. Existing destinations are authoritative
+/// so clearing records/revoking trust cannot be undone by a later legacy import.
+/// Received payloads are never copied: history retains their original paths.
+pub fn prepare_location(
+    home: &Path,
+    legacy: &Path,
+    old_default: Option<&Path>,
+) -> Result<(PathBuf, PathBuf), String> {
+    let root = home.join(".translateme");
+    fs::create_dir_all(&root).map_err(|e| format!("无法创建互传数据目录：{e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("无法保护互传数据目录：{e}"))?;
+    }
+    let destination = root.join("transfer");
+    let received = root.join("received");
+    if destination.exists() {
+        if !destination.is_dir() {
+            return Err("互传数据目录被同名文件占用。".into());
+        }
+        return Ok((destination, received));
+    }
+    let staging = tempfile::Builder::new()
+        .prefix(".transfer-migration-")
+        .tempdir_in(&root)
+        .map_err(|e| format!("无法准备互传迁移：{e}"))?;
+    let staged_store = Store::new(staging.path().to_owned())?;
+    // Only feature-owned filenames are migrated. Never traverse the old folder
+    // recursively, follow unrelated files, or move the user's received payloads.
+    if let Some(mut settings) = read_legacy::<Settings>(legacy, "settings.json")? {
+        if old_default.is_some_and(|path| settings.receive_dir == path) {
+            settings.receive_dir = received.clone();
+        }
+        staged_store.write("settings.json", &settings)?;
+    }
+    if let Some(trusted) = read_legacy::<Vec<TrustedPeer>>(legacy, "trusted.json")? {
+        staged_store.write("trusted.json", &trusted)?;
+    }
+    if let Some(records) = read_legacy::<Vec<Record>>(legacy, "inbox.json")? {
+        staged_store.write("inbox.json", &records)?;
+    }
+    // An empty fresh install is published too: the destination itself is the
+    // migration marker. Do not use a marker written before the actual data.
+    fs::rename(staging.path(), &destination)
+        .map_err(|e| format!("无法完成互传目录迁移，旧数据保持不变：{e}"))?;
+    Ok((destination, received))
+}
+
+/// Read without creating/modifying the legacy directory. A bad document aborts
+/// the entire migration instead of silently losing records or saved trust.
+fn read_legacy<T: DeserializeOwned>(dir: &Path, file: &str) -> Result<Option<T>, String> {
+    Store {
+        dir: dir.to_owned(),
+    }
+    .read(file)
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+
+    /// Real files exercise publication/restart behavior without the user's home,
+    /// Keychain, network, or actual inbox. Original received bytes must survive.
+    #[test]
+    fn migrates_metadata_once_and_leaves_received_files_in_place() {
+        let temp = tempfile::tempdir().unwrap();
+        let legacy = Store::new(temp.path().join("legacy")).unwrap();
+        let old_default = temp.path().join("Downloads/TranslateMe");
+        fs::create_dir_all(&old_default).unwrap();
+        let payload = old_default.join("received.txt");
+        fs::write(&payload, "original file").unwrap();
+        legacy
+            .write(
+                "settings.json",
+                &Settings {
+                    enabled: true,
+                    name: "My Mac".into(),
+                    receive_dir: old_default.clone(),
+                },
+            )
+            .unwrap();
+        legacy
+            .write(
+                "trusted.json",
+                &[TrustedPeer {
+                    id: "stable-peer-fingerprint".into(),
+                    name: "Other Mac".into(),
+                    platform: "macOS".into(),
+                }],
+            )
+            .unwrap();
+        legacy
+            .write(
+                "inbox.json",
+                &[Record {
+                    id: "transfer-id".into(),
+                    peer_id: "stable-peer-fingerprint".into(),
+                    peer_name: "Other Mac".into(),
+                    direction: "received".into(),
+                    phase: "completed".into(),
+                    created_at: 1,
+                    bytes: 13,
+                    total: 13,
+                    text: "saved message".into(),
+                    files: vec![],
+                    paths: vec![payload.clone()],
+                    error: String::new(),
+                }],
+            )
+            .unwrap();
+        let before = fs::read(legacy.dir.join("inbox.json")).unwrap();
+        let (dir, received) =
+            prepare_location(temp.path(), &legacy.dir, Some(&old_default)).unwrap();
+        let current = Store::new(dir.clone()).unwrap();
+        assert_eq!(
+            current
+                .read::<Settings>("settings.json")
+                .unwrap()
+                .unwrap()
+                .receive_dir,
+            received
+        );
+        let records = current.read::<Vec<Record>>("inbox.json").unwrap().unwrap();
+        assert_eq!(records[0].paths, [payload.clone()]);
+        assert_eq!(records[0].text, "saved message");
+        assert_eq!(
+            current
+                .read::<Vec<TrustedPeer>>("trusted.json")
+                .unwrap()
+                .unwrap()[0]
+                .id,
+            "stable-peer-fingerprint"
+        );
+        assert_eq!(fs::read(legacy.dir.join("inbox.json")).unwrap(), before);
+        assert_eq!(fs::read_to_string(payload).unwrap(), "original file");
+        assert!(!received.join("received.txt").exists());
+        // New data wins, including deliberate deletion, even with corrupt old data.
+        current.write("inbox.json", &Vec::<Record>::new()).unwrap();
+        current
+            .write("trusted.json", &Vec::<TrustedPeer>::new())
+            .unwrap();
+        fs::write(legacy.dir.join("trusted.json"), "broken old copy").unwrap();
+        assert_eq!(
+            prepare_location(temp.path(), &legacy.dir, Some(&old_default))
+                .unwrap()
+                .0,
+            dir
+        );
+        assert!(current
+            .read::<Vec<Record>>("inbox.json")
+            .unwrap()
+            .unwrap()
+            .is_empty());
+        assert!(current
+            .read::<Vec<TrustedPeer>>("trusted.json")
+            .unwrap()
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn custom_receive_directory_is_preserved() {
+        let temp = tempfile::tempdir().unwrap();
+        let legacy = Store::new(temp.path().join("legacy")).unwrap();
+        let custom = temp.path().join("chosen-folder");
+        legacy
+            .write(
+                "settings.json",
+                &Settings {
+                    enabled: false,
+                    name: "My PC".into(),
+                    receive_dir: custom.clone(),
+                },
+            )
+            .unwrap();
+        let (dir, _) = prepare_location(
+            temp.path(),
+            &legacy.dir,
+            Some(&temp.path().join("Downloads/TranslateMe")),
+        )
+        .unwrap();
+        let saved = Store::new(dir)
+            .unwrap()
+            .read::<Settings>("settings.json")
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.receive_dir, custom);
+        assert!(!saved.enabled);
+    }
+
+    #[test]
+    fn malformed_legacy_file_never_publishes_partial_migration() {
+        let temp = tempfile::tempdir().unwrap();
+        let legacy = Store::new(temp.path().join("legacy")).unwrap();
+        legacy
+            .write(
+                "settings.json",
+                &Settings {
+                    enabled: true,
+                    name: "My Mac".into(),
+                    receive_dir: temp.path().join("Downloads"),
+                },
+            )
+            .unwrap();
+        fs::write(legacy.dir.join("trusted.json"), "corrupt").unwrap();
+        assert!(prepare_location(temp.path(), &legacy.dir, None).is_err());
+        assert!(!temp.path().join(".translateme/transfer").exists());
+        assert_eq!(
+            fs::read_to_string(legacy.dir.join("trusted.json")).unwrap(),
+            "corrupt"
+        );
+        assert_eq!(
+            fs::read_dir(temp.path().join(".translateme"))
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn fresh_install_uses_home_without_creating_legacy_directories() {
+        let temp = tempfile::tempdir().unwrap();
+        let legacy = temp.path().join("missing-legacy");
+        let (dir, received) = prepare_location(temp.path(), &legacy, None).unwrap();
+        assert!(dir.is_dir());
+        assert_eq!(received, temp.path().join(".translateme/received"));
+        assert!(!legacy.exists());
+    }
+}
+
 /// Commit without replacing existing files, including a concurrent transfer's
 /// same-name result. The temporary file stays owned/cleanable on every failure.
 pub fn publish_file(

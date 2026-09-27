@@ -334,6 +334,13 @@ h2 {
   margin-top: 12px;
   line-height: 1.7;
 }
+/* Keycaps are a platform-aware view of the saved chord, never raw config text. */
+.shortcut-recorder { width: 100%; min-height: 46px; display: flex; align-items: center; gap: 7px; padding: 8px 11px; border: 1px solid #dfe8e2; border-radius: 8px; background: #fafcfb; color: #435f4e; cursor: pointer; }
+.shortcut-recorder:hover { border-color: #a3bbaa; background: #f2f7f3; }
+.shortcut-recorder.is-recording { border-color: var(--accent); box-shadow: 0 0 0 3px #79ab8d20; font-size: 11px; }
+.shortcut-cap { display: inline-flex; align-items: center; justify-content: center; min-width: 29px; height: 28px; padding: 0 7px; margin: 0; border: 1px solid #d5e0d8; border-bottom-width: 2px; border-radius: 5px; background: #fff; color: inherit; font: 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; white-space: nowrap; }
+.shortcut-cap svg { width: 17px; height: 17px; stroke-width: 1.7; }
+.shortcut-cap .key-solid { fill: currentColor; stroke: none; }
 .switch-row {
   height: 36px;
   display: flex;
@@ -544,7 +551,9 @@ body.popup {
 .is-result .mini-translation { opacity: 1; transform: translateY(0) scale(1); }
 .keyboard-area { padding: 17px 26px 12px; background: linear-gradient(#fff, #fbfcfa); }
 .keyboard-label { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; color: #919d93; font-size: 9px; }
-.shortcut-label { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 10px; color: var(--demo-accent); letter-spacing: 1px; }
+.shortcut-label { display: flex; align-items: center; gap: 4px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 10px; color: var(--demo-accent); }
+.shortcut-label .shortcut-cap { min-width: 19px; height: 20px; padding: 0 4px; font-size: 9px; border-radius: 4px; }
+.shortcut-label .shortcut-cap svg { width: 12px; height: 12px; }
 .keyboard-deck { position: relative; padding: 10px 12px 13px; border: 1px solid #e1e5de; border-bottom: 3px solid #d8dfd3; border-radius: 12px; background: linear-gradient(135deg, #f0f2ed, #e9ede6); box-shadow: 0 3px 0 #ecf0e9, 0 8px 13px #5362440a, inset 0 1px 0 #fff; }
 .read-demo .keyboard-deck { background: linear-gradient(135deg, #f1f0f4, #eceaf0); border-color: #e0dce6; border-bottom-color: #dad5e2; box-shadow: 0 3px 0 #f0edf4, 0 8px 13px #5350640a, inset 0 1px 0 #fff; }
 .key-row { display: flex; gap: 5px; }
@@ -553,6 +562,8 @@ body.popup {
 .read-demo .ghost-keys span { color: #b1aab9; border-color: #e1dce6; }
 .shortcut-keys { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 11px 0 0; }
 .demo-key { margin: 0; min-width: 0; width: 62px; height: 48px; display: grid; place-items: center; font: 22px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #64715d; background: linear-gradient(#fff, #fafcf6); border: 1px solid #d1d9c8; border-bottom: 4px solid #c6d1bb; border-radius: 9px; box-shadow: 0 3px 3px #394c2520, inset 0 1px 0 #fff; transform: translateY(0); transition: transform .18s, background .18s, box-shadow .18s, color .18s, border-color .18s; overflow: hidden; }
+.demo-key.shortcut-cap { font-size: 17px; flex-shrink: 1; }
+.demo-key svg { width: 23px; height: 23px; }
 .letter-key { font-size: 19px; }
 .read-demo .demo-key { color: #7c708c; background: linear-gradient(#fff, #fcfaff); border-color: #ddd4e7; border-bottom-color: #d0c5db; box-shadow: 0 3px 3px #5537681c, inset 0 1px 0 #fff; }
 .is-pressing .demo-key { color: #fff; background: var(--demo-accent); border-color: var(--demo-accent); border-bottom-color: var(--demo-accent); transform: translateY(3px); box-shadow: 0 0 16px var(--demo-glow), inset 0 2px 3px #0002; }
@@ -569,10 +580,19 @@ body.popup {
 .demo-footnote { display: flex; align-items: center; justify-content: space-between; padding: 14px 2px 9px; font-size: 9px; color: #a1aaa0; }
 .demo-footnote .text-button { font-size: 11px; color: #658269; gap: 7px; }
 .is-paused .typing-caret { animation-play-state: paused; }
-/* Reading is mouse-only: the left button depresses during selection, then
-   releases before the progress path fills and the translated sheet lights up. */
+/* Both devices share the same selection timeline. macOS illustrates a pressed
+   finger moving across a stationary trackpad; Windows depresses the left button.
+   Device imagery is explanatory, not a restriction on usable physical hardware. */
 .mouse-deck { height: 109px; border: 1px solid #e5e0ec; border-radius: 12px; background: radial-gradient(ellipse at 65% 50%, #f9f5ff, transparent 70%), #f1eff5; display: flex; align-items: center; justify-content: center; gap: 20px; padding-bottom: 14px; position: relative; }
-.mouse-motion { width: 53px; display: grid; place-items: center; }
+.mouse-motion { width: 78px; display: grid; place-items: center; }
+.demo-trackpad { width: 77px; height: 53px; position: relative; border: 1px solid #c6bbd1; border-bottom: 3px solid #b8aac5; border-radius: 8px; background: linear-gradient(140deg, #fff, #e8e2ed); box-shadow: 0 4px 5px #4d36551c, inset 0 1px 1px #fff; }
+.trackpad-trail { position: absolute; left: 17px; top: 29px; height: 2px; width: var(--finger-shift, 0px); border-radius: 2px; background: #a28ab6; opacity: 0; }
+.trackpad-contact { position: absolute; left: 12px; top: 24px; width: 12px; height: 12px; border: 1px solid #9d81b4; border-radius: 50%; box-shadow: 0 0 0 4px #a18ab526; opacity: 0; transform: translateX(var(--finger-shift, 0px)); }
+.trackpad-finger { position: absolute; left: 10px; top: 6px; width: 16px; height: 26px; border: 1px solid #c0afce; border-radius: 9px 9px 7px 7px; background: linear-gradient(110deg, #e3d6ee, #b9a3ce); box-shadow: 0 3px 3px #503a6525; transform: translate(var(--finger-shift, 0px), -6px); opacity: .6; transition: opacity .2s; }
+.is-selecting .trackpad-finger { opacity: 1; transform: translateX(var(--finger-shift, 0px)); }
+.is-selecting .trackpad-contact, .is-selecting .trackpad-trail { opacity: 1; }
+.is-result .trackpad-finger { opacity: .25; }
+[data-platform="macOS"] .demo-mouse, [data-platform="Windows"] .demo-trackpad { display: none; }
 .demo-mouse { position: relative; width: 39px; height: 59px; border-radius: 18px 18px 16px 16px; background: linear-gradient(120deg, #fff, #f6f3fb); border: 1px solid #d4cbdc; border-bottom: 3px solid #c8bdd3; box-shadow: 0 4px 5px #4d36551c, inset 0 1px 1px #fff; overflow: hidden; transform: translateX(var(--mouse-shift, -7px)); }
 .mouse-left { position: absolute; top: 0; left: 0; height: 28px; width: 50%; border-right: 1px solid #dbd3e2; border-bottom: 1px solid #dbd3e2; transition: background .2s, box-shadow .2s; }
 .mouse-wheel { position: absolute; width: 4px; height: 10px; border-radius: 4px; background: #bab0c6; top: 10px; left: 16px; }
@@ -684,6 +704,9 @@ body.popup {
   .engine-choices label:has(input:checked) { background: #2b4132; border-color: #729c7d; }
   .field, .allowlist-field { color: #b1c5b8; }
   .field > input, .field > select { background-color: #19251e; border-color: #536c5c; color: #e1eee5; }
+  .shortcut-recorder { background: #19251e; border-color: #536c5c; color: #e1eee5; }
+  .shortcut-recorder:hover { background: #26392d; border-color: #7d9b88; }
+  .shortcut-cap { background: #2b3e31; border-color: #5b7662; }
   .field > select {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 4.5 3 3 3-3' fill='none' stroke='%23b1c5b8' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   }
@@ -748,6 +771,10 @@ body.popup {
   .demo-progress { background: #34442d; }
   .demo-footnote .text-button { color: #b6cebf; }
   .mouse-deck { background: radial-gradient(ellipse at 65% 50%, #483a55, transparent 70%), #322b3b; border-color: #62546e; }
+  .demo-trackpad { background: linear-gradient(130deg, #756080, #51425e); border-color: #a28caf; border-bottom-color: #8e76a0; box-shadow: 0 4px 5px #0003, inset 0 1px 1px #bba6c8; }
+  .trackpad-finger { background: linear-gradient(110deg, #eadcf3, #bfa5d1); border-color: #e5d0f1; }
+  .trackpad-contact { border-color: #e7cef9; box-shadow: 0 0 0 4px #d8b3f137; }
+  .trackpad-trail { background: #d6b8ed; }
   .demo-mouse { background: linear-gradient(120deg, #786388, #594868); border-color: #ac94be; border-bottom-color: #8e76a0; box-shadow: 0 4px 5px #0003, inset 0 1px 1px #c6b2d4; }
   .mouse-left { border-color: #b19ac1; }
   .mouse-wheel { background: #d0bcdf; }

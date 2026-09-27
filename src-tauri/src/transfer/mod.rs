@@ -132,7 +132,13 @@ fn bounded_name(s: &str) -> Result<String, String> {
 impl TransferService {
     /// Load only this feature's data; a corrupt LAN file returns an error to its
     /// adapter rather than modifying translation settings or clearing trust.
-    pub fn new(dir: PathBuf, downloads: PathBuf, events: EventSink) -> Result<Service, String> {
+    /// The adapter resolves/migrates locations; the service receives the exact
+    /// default inbox path, and always preserves a saved custom destination.
+    pub fn new(
+        dir: PathBuf,
+        default_receive_dir: PathBuf,
+        events: EventSink,
+    ) -> Result<Service, String> {
         let store = Store::new(dir)?;
         let name = hostname::get()
             .ok()
@@ -142,7 +148,7 @@ impl TransferService {
         let settings = store.read("settings.json")?.unwrap_or(Settings {
             enabled: true,
             name,
-            receive_dir: downloads.join("TranslateMe"),
+            receive_dir: default_receive_dir,
         });
         let trusted = store.read("trusted.json")?.unwrap_or_default();
         let mut records: Vec<Record> = store.read("inbox.json")?.unwrap_or_default();

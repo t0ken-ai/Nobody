@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import "./style.css";
 import { renderTranslation } from "./markdown";
 import { demoMarkup, mountDemos } from "./demos";
+import { desktopPlatform, mountShortcutRecorder } from "./shortcuts";
 import { transferMarkup, mountTransfer } from "./transfer";
 
 /** Custom entries come only from the native app picker. Presets can remain
@@ -89,6 +90,7 @@ let busy = false;
 let testingConnection = false;
 let llmDraftRevision = 0;
 let demos: ReturnType<typeof mountDemos> | undefined;
+const shortcutRecorders: ReturnType<typeof mountShortcutRecorder>[] = [];
 let transfer: ReturnType<typeof mountTransfer> | undefined;
 
 /** Measure content, not the current window height, to avoid a resize feedback
@@ -184,7 +186,7 @@ if (popup) {
               <p id="prompt-help" class="field-help">整段选中文字（包含代码）会提供给 LLM。可调整语气和翻译偏好；代码保留与完整性校验始终启用。</p>
               <div class="llm-test-row"><button id="test-llm" class="button small" type="button">测试连接</button><span id="llm-test-status" role="status">用当前配置翻译固定测试句，无需先保存。</span></div><div id="llm-test-preview" class="llm-test-preview" hidden></div>
             </div></div>
-            <div class="setting-card"><h2>阅读与快捷键</h2><div class="field-row"><label class="field">阅读目标语言<select id="reading-language">${languageOptions}</select></label><label class="field">划词自动翻译<span class="switch-row"><input id="auto-selection" type="checkbox" /><span>仅在白名单应用中触发</span></span></label></div><div class="allowlist-field"><div class="allowlist-heading"><span>自动划词 · 应用白名单</span><button id="add-application" class="button small" type="button">＋ 添加本机应用</button></div><ul id="application-list" aria-label="自动划词应用白名单"></ul><div class="allowlist-footer"><span>默认：ChatGPT Desktop、Claude Desktop</span><button id="reset-applications" class="text-button" type="button">恢复默认</button></div><p class="field-help">只在列表中应用的阅读正文里自动翻译；输入框、保存／打开文件对话框忽略。手动快捷键不受白名单限制。修改后请保存设置。</p></div><div class="field-row"><label class="field">写入英文快捷键<input id="write-key" aria-label="写入英文快捷键" /></label><label class="field">阅读翻译快捷键<input id="read-key" aria-label="阅读翻译快捷键" /></label></div><p class="field-help">可直接按组合键录入。翻译只负责回填，不会替你按发送；输入变化时保留译文供复制。</p></div>
+            <div class="setting-card"><h2>阅读与快捷键</h2><div class="field-row"><label class="field">阅读目标语言<select id="reading-language">${languageOptions}</select></label><label class="field">划词自动翻译<span class="switch-row"><input id="auto-selection" type="checkbox" /><span>仅在白名单应用中触发</span></span></label></div><div class="allowlist-field"><div class="allowlist-heading"><span>自动划词 · 应用白名单</span><button id="add-application" class="button small" type="button">＋ 添加本机应用</button></div><ul id="application-list" aria-label="自动划词应用白名单"></ul><div class="allowlist-footer"><span>默认：ChatGPT Desktop、Claude Desktop</span><button id="reset-applications" class="text-button" type="button">恢复默认</button></div><p class="field-help">只在列表中应用的阅读正文里自动翻译；输入框、保存／打开文件对话框忽略。手动快捷键不受白名单限制。修改后请保存设置。</p></div><div class="field-row"><div class="field"><span>写入英文快捷键</span><button type="button" class="shortcut-recorder" id="write-key-recorder" aria-label="写入英文快捷键"></button><input type="hidden" id="write-key" value="CommandOrControl+Shift+E" /></div><div class="field"><span>阅读翻译快捷键</span><button type="button" class="shortcut-recorder" id="read-key-recorder" aria-label="阅读翻译快捷键"></button><input type="hidden" id="read-key" value="CommandOrControl+Shift+D" /></div></div><p class="field-help">点击按键图标后录入新组合键，Esc 取消。翻译只负责回填，不会替你按发送；输入变化时保留译文供复制。</p></div>
             <div class="action-row"><span class="privacy-note">不保存翻译历史</span><button class="button primary" type="submit" id="save">保存设置 ${icon("check")}</button></div>
           </form>
         </section>
@@ -279,23 +281,8 @@ if (popup) {
         $("llm-fields").hidden = selectedEngine() !== "llm";
       };
     });
-  for (const id of ["write-key", "read-key"]) {
-    $(id).onkeydown = (event) => {
-      if (
-        !(event.metaKey || event.ctrlKey || event.altKey) ||
-        ["Meta", "Control", "Alt", "Shift"].includes(event.key)
-      )
-        return;
-      event.preventDefault();
-      const modifiers = [
-        event.metaKey ? "Super" : "",
-        event.ctrlKey ? "Control" : "",
-        event.altKey ? "Alt" : "",
-        event.shiftKey ? "Shift" : "",
-      ].filter(Boolean);
-      const key = event.code.replace(/^Key|^Digit/, "");
-      $<HTMLInputElement>(id).value = [...modifiers, key].join("+");
-    };
+  for (const [id, name] of [["write-key", "写入英文快捷键"], ["read-key", "阅读翻译快捷键"]]) {
+    shortcutRecorders.push(mountShortcutRecorder($<HTMLButtonElement>(`${id}-recorder`), $<HTMLInputElement>(id), () => desktopPlatform(status?.platform), name));
   }
   $("add-application").onclick = async () => {
     if (pickingApplication) return;
@@ -517,12 +504,12 @@ async function refresh(initializeForm = true) {
       : "再一步，连接你的工作流";
     $("permission-description").textContent = status.accessibility
       ? (s.autoSelection && s.automaticApps.length
-        ? `${s.automaticApps.map(appName).join(" / ")} 中划选正文，松开鼠标即可。`
+        ? `${s.automaticApps.map(appName).join(" / ")} 中划选正文，松开即可。`
         : "自动划词已关闭，仍可使用手动翻译快捷键。")
       : "开启辅助功能后，才能读取选区并将英文回填到原输入框。";
     $("permission").hidden = status.accessibility;
     $("permission-banner").classList.toggle("ready", status.accessibility);
-    demos?.setWriteShortcut(s.writeShortcut);
+    demos?.setWriteShortcut(s.writeShortcut, desktopPlatform(status.platform));
     $("engine-badge").textContent =
       s.engine === "system" ? "Apple 系统翻译" : `LLM · ${s.model}`;
     $("engine-note").textContent =
@@ -543,6 +530,7 @@ async function refresh(initializeForm = true) {
       renderApplications();
       $<HTMLInputElement>("write-key").value = s.writeShortcut;
       $<HTMLInputElement>("read-key").value = s.readShortcut;
+      shortcutRecorders.forEach(recorder => recorder.refresh());
       $<HTMLInputElement>("endpoint").value = s.endpoint;
       $<HTMLInputElement>("model").value = s.model;
       $<HTMLTextAreaElement>("llm-prompt").value = s.llmPrompt;

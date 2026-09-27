@@ -1,3 +1,5 @@
+import { desktopPlatform, renderShortcut, type DesktopPlatform } from "./shortcuts";
+
 /** Self-contained, fixed-example UI demonstrations. They never read selections,
  * invoke translation, or dispatch real shortcuts. Only the saved writing shortcut
  * enters this module; all animation state belongs to the main window. */
@@ -16,14 +18,14 @@ const translated = "Show an error when the request fails and allow retrying.";
 const duration = 10400;
 
 /** The scenes share playback controls. Writing uses keys; reading shows the
- * mouse-only automatic-selection flow, which must never imply a required chord.
+ * pointer-based automatic-selection flow, which must never imply a required chord.
  * Animated content is decorative; a stable accessible description avoids a
  * screen reader announcing each typed character on every loop. */
 export function demoMarkup(): string {
   return ["write", "read"].map((mode, index) => `
-    <article class="demo-card ${mode}-demo" id="demo-${mode}" aria-labelledby="${mode}-title">
+    <article class="demo-card ${mode}-demo" id="demo-${mode}" data-platform="${desktopPlatform()}" aria-labelledby="${mode}-title">
       <header class="demo-heading"><div><span class="demo-number">0${index + 1}</span><h2 id="${mode}-title">${mode === "write" ? "用母语写，让英文接棒" : "划过英文，读懂它"}</h2></div><span class="demo-direction">${mode === "write" ? "中 → EN" : "EN → 中"}</span></header>
-      <p class="sr-only">${mode === "write" ? "演示：输入中文，按写入快捷键后，输入框中的文字变成英文，不自动发送。" : "演示：开启自动划词后，拖选英文并松开鼠标，选区稳定后自动在上方显示中文译文，无需快捷键。"}</p>
+      <p class="sr-only">${mode === "write" ? "演示：输入中文，按写入快捷键后，输入框中的文字变成英文，不自动发送。" : "演示：开启自动划词后，拖选英文并松开，选区稳定后自动在上方显示中文译文，无需快捷键。"}</p>
       <div class="demo-scene" aria-hidden="true">
         <div class="scene-chrome"><span class="scene-dots"><i></i><i></i><i></i></span><span>${mode === "write" ? "YOUR NEXT PROMPT" : "A LITTLE MORE CLARITY"}</span><span class="scene-mark">↗</span></div>
         ${mode === "write" ? `
@@ -36,8 +38,8 @@ export function demoMarkup(): string {
           <div class="scene-caption"><span class="success-check">${check}</span><span class="scene-feedback">遇到一句想读懂的话</span></div>
         `}
       </div>
-      <div class="keyboard-area" aria-hidden="true"><div class="keyboard-label"><span class="keyboard-action">${mode === "write" ? "输入你的想法" : "按住鼠标，划选文字"}</span><span class="shortcut-label" ${mode === "write" ? 'id="write-shortcut"' : ""}>${mode === "read" ? "无需按键" : ""}</span></div>
-        ${mode === "write" ? `<div class="keyboard-deck"><div class="key-row ghost-keys">${"QWERTYUIOP".split("").map(key => `<span>${key}</span>`).join("")}</div><div class="shortcut-keys"></div></div>` : `<div class="mouse-deck"><div class="mouse-motion"><div class="demo-mouse"><span class="mouse-left"></span><span class="mouse-wheel"></span></div></div><div class="automatic-path"><span class="path-track"><i></i></span><span class="auto-spark">✦</span><span class="path-track"><i></i></span></div><div class="auto-result-icon"><span></span><span></span><span></span><i>${check}</i></div><div class="mouse-captions"><span>拖选 · 松开</span><span>自动翻译</span></div></div>`}
+      <div class="keyboard-area" aria-hidden="true"><div class="keyboard-label"><span class="keyboard-action">${mode === "write" ? "输入你的想法" : "按住并拖选文字"}</span><span class="shortcut-label" ${mode === "write" ? 'id="write-shortcut"' : ""}>${mode === "read" ? "无需按键" : ""}</span></div>
+        ${mode === "write" ? `<div class="keyboard-deck"><div class="key-row ghost-keys">${"QWERTYUIOP".split("").map(key => `<span>${key}</span>`).join("")}</div><div class="shortcut-keys"></div></div>` : `<div class="mouse-deck"><div class="mouse-motion"><div class="demo-trackpad"><span class="trackpad-trail"></span><span class="trackpad-contact"></span><span class="trackpad-finger"></span></div><div class="demo-mouse"><span class="mouse-left"></span><span class="mouse-wheel"></span></div></div><div class="automatic-path"><span class="path-track"><i></i></span><span class="auto-spark">✦</span><span class="path-track"><i></i></span></div><div class="auto-result-icon"><span></span><span></span><span></span><i>${check}</i></div><div class="mouse-captions"><span class="device-caption">拖选 · 松开</span><span>自动翻译</span></div></div>`}
       </div>
       <footer class="demo-controls"><div class="demo-steps"><span>01 ${mode === "write" ? "输入" : "划选"}</span><i></i><span>02 ${mode === "write" ? "快捷键" : "松开"}</span><i></i><span>03 ${mode === "write" ? "回填" : "译文"}</span></div><div><button class="demo-toggle" aria-label="暂停${mode === "write" ? "写入" : "划词"}演示" title="暂停">${pause}</button><button class="demo-replay" aria-label="重播${mode === "write" ? "写入" : "划词"}演示" title="重播">${replay}</button></div></footer>
       <div class="demo-progress" aria-hidden="true"><span></span></div>
@@ -60,6 +62,7 @@ type Scene = {
  * resuming resets the clock origin so background time never skips the story.
  * Reduced motion starts at the final frame; explicit play is still available. */
 export function mountDemos() {
+  let platform: DesktopPlatform = desktopPlatform();
   const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
   let visible = true;
   let frame = 0;
@@ -78,7 +81,7 @@ export function mountDemos() {
   });
 
   // Writing changes text during the key press. Reading instead waits one
-  // illustrative second after mouse release: no keyboard event is involved.
+  // illustrative second after pointer release: no keyboard event is involved.
   // This is an explanatory timeline, not a promise of real translation latency.
   function render(scene: Scene) {
     const t = scene.elapsed;
@@ -100,6 +103,7 @@ export function mountDemos() {
       scene.root.classList.toggle("is-selecting", t >= 700 && t < 2400);
       scene.root.classList.toggle("is-settling", t >= 2400 && t < 3400);
       scene.root.style.setProperty("--mouse-shift", `${(selection - .5) * 14}px`);
+      scene.root.style.setProperty("--finger-shift", `${selection * 34}px`);
       scene.root.style.setProperty("--settled", `${Math.min(1, Math.max(0, (t - 2400) / 1000)) * 100}%`);
     }
     if (scene.stage !== stage) {
@@ -109,7 +113,7 @@ export function mountDemos() {
         ? scene.mode === "write" ? "英文已回填，随时发送" : "译文就在原文上方"
         : scene.mode === "write" ? "从一个想法开始" : "遇到一句想读懂的话";
       scene.action.textContent = stage === "prepare"
-        ? scene.mode === "write" ? "输入你的想法" : "按住鼠标，划选文字"
+        ? scene.mode === "write" ? "输入你的想法" : platform === "macOS" ? "按住触控板，拖选文字" : "按住鼠标，拖选文字"
         : result ? scene.mode === "write" ? "已回填 · 不自动发送" : "自动显示 · 原文保留" : writing ? "按下组合键" : "已松开，等待选区稳定";
     }
   }
@@ -187,26 +191,22 @@ export function mountDemos() {
       visible = value;
       schedule();
     },
-    /** Render saved shortcuts as text nodes, never HTML. Custom key names may
-     * come from a user-edited configuration; the demo must not interpret them. */
-    setWriteShortcut(write: string) {
-      scenes.filter(scene => scene.mode === "write").forEach(scene => {
-        const mac = navigator.platform.includes("Mac");
-        const keys = write.split("+").filter(Boolean).map(key => {
-          const labels: Record<string, string> = {
-            CommandOrControl: mac ? "⌘" : "Ctrl", Super: "⌘", Command: "⌘",
-            Control: "Ctrl", Shift: "⇧", Alt: mac ? "⌥" : "Alt",
-          };
-          return labels[key] ?? key;
-        });
-        scene.root.querySelector(".shortcut-label")!.textContent = keys.join(" + ");
-        const deck = scene.root.querySelector(".shortcut-keys")!;
-        deck.replaceChildren(...keys.map((key, index) => {
-          const cap = document.createElement("kbd");
-          cap.className = `demo-key${index === keys.length - 1 ? " letter-key" : ""}`;
-          cap.textContent = key;
-          return cap;
-        }));
+    /** Settings and tutorials share modifier semantics. Native platform updates
+     * also switch the pointer illustration; this never changes input capture. */
+    setWriteShortcut(write: string, nextPlatform = desktopPlatform()) {
+      platform = nextPlatform;
+      scenes.forEach(scene => {
+        scene.root.dataset.platform = platform;
+        if (scene.mode === "write") {
+          renderShortcut(scene.root.querySelector(".shortcut-label")!, write, platform);
+          renderShortcut(scene.root.querySelector(".shortcut-keys")!, write, platform, true);
+        } else {
+          scene.root.querySelector(".device-caption")!.textContent = platform === "macOS" ? "触控板 · 拖选" : "鼠标 · 拖选";
+          scene.root.querySelector(".sr-only")!.textContent = `演示：使用${platform === "macOS" ? "触控板" : "鼠标"}拖选英文并松开，选区稳定后自动在上方显示译文，无需快捷键。`;
+        }
+        // Refresh cached captions when native status arrives after first paint.
+        scene.stage = "";
+        render(scene);
       });
     },
   };

@@ -27,7 +27,7 @@ async fn fixture(name: &str) -> Fixture {
     let root = tempfile::tempdir().unwrap();
     let service = TransferService::new(
         root.path().join("config"),
-        root.path().join("downloads"),
+        root.path().join("received"),
         Arc::new(|_| {}),
     )
     .unwrap();

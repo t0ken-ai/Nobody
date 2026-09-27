@@ -45,13 +45,20 @@ pub fn install(app: &tauri::AppHandle) {
         }
     });
     let service = (|| {
-        let dir = app
+        let legacy = app
             .path()
             .app_config_dir()
             .map_err(|e| e.to_string())?
             .join("transfer");
-        let downloads = app.path().download_dir().map_err(|e| e.to_string())?;
-        TransferService::new(dir, downloads, events)
+        let home = app.path().home_dir().map_err(|e| e.to_string())?;
+        let old_default = app
+            .path()
+            .download_dir()
+            .ok()
+            .map(|path| path.join("TranslateMe"));
+        let (dir, received) =
+            super::store::prepare_location(&home, &legacy, old_default.as_deref())?;
+        TransferService::new(dir, received, events)
     })();
     app.manage(LanState {
         service: service.clone(),
