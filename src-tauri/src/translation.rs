@@ -5,6 +5,8 @@ use crate::{
     document::Document,
     platform::Platform,
 };
+use futures_util::StreamExt;
+use litellm_rust::{config::ProviderConfig, error::LiteLLMError, types::ChatRequest, LiteLLM};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -97,7 +99,7 @@ async fn resolve_key(endpoint: &str, draft: Option<String>) -> Result<Option<Str
     let endpoint_copy = endpoint.to_string();
     let saved = tauri::async_runtime::spawn_blocking(move || config::get_key(&endpoint_copy))
         .await
-        .map_err(|_| "无法读取系统凭据库。")??;
+        .map_err(|_| "无法读取 LLM 加密存储。")??;
     Ok(saved.or_else(|| {
         let variable = if is_kimi(endpoint) {
             Some("KIMI_KEY")
@@ -185,64 +187,113 @@ async fn complete(
     key: Option<String>,
 ) -> Result<Completion, String> {
     let url = config::endpoint_url(&settings.endpoint)?;
-    let mut payload = json!({"model":settings.model.trim(), "messages":messages(settings,input,language), "stream":false});
-    // K3 and GLM-5.3 require thinking for the requested model. Low effort
-    // reduces translation latency without disabling or changing the model.
+    // A private explicit provider prevents SDK built-in routing or environment
+    // fallback from changing the configured host, including models containing '/'.
+    let base = url
+        .as_str()
+        .trim_end_matches('/')
+        .strip_suffix("/chat/completions")
+        .ok_or("LLM 地址格式无效。")?;
+    let mut provider = ProviderConfig::default()
+        .with_base_url(base)
+        .with_header("User-Agent", "TranslateMe/0.1.0");
+    provider = match key {
+        Some(key) => provider.with_api_key(key),
+        None => provider.with_no_auth(true),
+    };
+    let llm = LiteLLM::new()
+        .map_err(|_| "无法初始化 LLM 客户端。")?
+        .with_client(http.clone())
+        .with_provider("translateme", provider);
+    let mut request = ChatRequest::new(format!("translateme/{}", settings.model.trim()));
+    request.messages = serde_json::from_value(messages(settings, input, language))
+        .map_err(|_| "无法构建翻译请求。")?;
+    // K3/GLM-5.3 keep their required reasoning enabled; low effort limits latency.
     if is_kimi(&settings.endpoint)
         || (is_zai(&settings.endpoint) && settings.model.trim() == "glm-5.3")
     {
-        payload["reasoning_effort"] = json!("low");
+        request.reasoning_effort = Some(json!("low"));
     }
-    let mut request = http
-        .post(url)
-        .header(reqwest::header::USER_AGENT, "TranslateMe/0.1.0")
-        .json(&payload);
-    if let Some(key) = key {
-        request = request.bearer_auth(key);
-    }
-    let mut response = request.send().await.map_err(|e| {
-        if e.is_timeout() {
-            "LLM 请求超时，请重试。".to_string()
-        } else {
-            "无法连接 LLM，请检查 API 地址、证书和网络。".to_string()
-        }
-    })?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(match status.as_u16() {
-            401 => {
-                "LLM 身份验证失败（401），请检查密钥是否有效、是否属于该服务，以及模型权限。".into()
+    // SDK 0.3 drops finish_reason on non-streaming replies. Accumulate SSE privately
+    // so truncated replies are still rejected before displaying/backfilling text.
+    tokio::time::timeout(std::time::Duration::from_secs(55), async {
+        let mut stream = llm
+            .stream_completion(request)
+            .await
+            .map_err(safe_sdk_error)?;
+        let mut content = String::new();
+        let mut model = settings.model.trim().to_string();
+        let mut finished = false;
+        let mut total_bytes = 0usize;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(safe_sdk_error)?;
+            if let Some(raw) = &chunk.raw {
+                // Includes reasoning without ever displaying or persisting it. The
+                // SDK separately caps individual SSE events at 16 MiB; our budget
+                // caps accumulated decoded output at 1 MiB before acceptance.
+                total_bytes = total_bytes.saturating_add(raw.to_string().len());
+                if total_bytes > 1_048_576 {
+                    return Err("LLM 返回内容过大。".into());
+                }
+                if let Some(id) = raw["model"].as_str() {
+                    model = id.to_string();
+                }
+                if finished && !chunk.content.is_empty() {
+                    return Err("LLM 结束后仍返回内容，已保留原文。".into());
+                }
+                if !raw["choices"][0]["delta"]["tool_calls"].is_null() {
+                    return Err("LLM 返回了工具调用，已保留原文。".into());
+                }
+                if let Some(reason) = raw["choices"][0]["finish_reason"].as_str() {
+                    if reason != "stop" {
+                        return Err("LLM 译文未正常完成，已保留原文。".into());
+                    }
+                    finished = true;
+                }
             }
-            403 => "LLM 拒绝访问（403），请检查账号、模型和客户端权限。".into(),
-            404 => "LLM 接口或模型不存在（404），请检查地址和模型名称。".into(),
-            429 => "LLM 请求受限（429），请稍后重试或检查额度。".into(),
-            _ => format!("LLM 服务返回 HTTP {}。", status.as_u16()),
-        });
-    }
-    if response.content_length().is_some_and(|n| n > 1_048_576) {
-        return Err("LLM 返回内容过大。".into());
-    }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| "LLM 响应中断。")? {
-        if bytes.len() + chunk.len() > 1_048_576 {
-            return Err("LLM 返回内容过大。".into());
+            content.push_str(&chunk.content);
         }
-        bytes.extend_from_slice(&chunk);
-    }
-    let body: Value = serde_json::from_slice(&bytes).map_err(|_| "LLM 没有返回有效 JSON。")?;
-    if body["choices"][0]["finish_reason"] != "stop" {
-        return Err("LLM 译文未正常完成，已保留原文。".into());
-    }
-    let content = body["choices"][0]["message"]["content"]
-        .as_str()
-        .ok_or("LLM 返回内容为空。")?;
-    Ok(Completion {
-        text: parse_llm(content, input)?,
-        model: body["model"]
-            .as_str()
-            .unwrap_or(settings.model.trim())
-            .to_string(),
+        if !finished {
+            return Err("LLM 译文未正常完成，已保留原文。".into());
+        }
+        Ok(Completion {
+            text: parse_llm(&content, input)?,
+            model,
+        })
     })
+    .await
+    .map_err(|_| "LLM 请求超时，请重试。".to_string())?
+}
+
+/// SDK errors can embed response bodies and URLs. Only inspect a status prefix
+/// generated by its HTTP adapter; never return/debug/log the remote error text.
+fn safe_sdk_error(error: LiteLLMError) -> String {
+    if let LiteLLMError::Http { message, source } = error {
+        let status = message
+            .strip_prefix("http ")
+            .and_then(|s| s.split_once(':'))
+            .and_then(|(code, _)| code.parse::<u16>().ok());
+        if let Some(status) = status {
+            return match status {
+                401 => {
+                    "LLM 身份验证失败（401），请检查密钥是否有效、是否属于该服务，以及模型权限。"
+                        .into()
+                }
+                403 => "LLM 拒绝访问（403），请检查账号、模型和客户端权限。".into(),
+                404 => "LLM 接口或模型不存在（404），请检查地址和模型名称。".into(),
+                429 => "LLM 请求受限（429），请稍后重试或检查额度。".into(),
+                _ => format!("LLM 服务返回 HTTP {status}。"),
+            };
+        }
+        if source
+            .as_ref()
+            .and_then(|e| e.downcast_ref::<reqwest::Error>())
+            .is_some_and(|e| e.is_timeout())
+        {
+            return "LLM 请求超时，请重试。".into();
+        }
+    }
+    "无法完成 LLM 请求，请检查地址、模型、网络及服务的流式响应支持。".into()
 }
 
 #[derive(Deserialize)]
@@ -380,6 +431,7 @@ mod tests {
                 false,
             ),
             (200, "stop", result("Check it.", vec![]), false),
+            (200, "", result("Check `git diff --check`.", vec![]), false),
             (401, "stop", "secret-provider-echo".into(), false),
         ] {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -417,13 +469,16 @@ mod tests {
                 let body: Value =
                     serde_json::from_slice(&request[header_end..header_end + length]).unwrap();
                 assert_eq!(body["messages"][1]["content"], "检查 `git diff --check`。");
-                let response = json!({"model":"test-model","choices":[{"finish_reason":finish,"message":{"content":content}}]}).to_string();
-                let wire = format!("HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",response.len());
+                assert_eq!(body["stream"], true);
+                assert_eq!(body["model"], "test/vendor-model");
+                let data = json!({"model":"test/vendor-model","choices":[{"finish_reason":if finish.is_empty() { Value::Null } else { json!(finish) },"delta":{"content":content}}]});
+                let response = format!("data: {data}\n\ndata: [DONE]\n\n");
+                let wire = format!("HTTP/1.1 {status} Test\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",response.len());
                 stream.write_all(wire.as_bytes()).await.unwrap();
             });
             let settings = Settings {
                 endpoint,
-                model: "test-model".into(),
+                model: "test/vendor-model".into(),
                 ..Settings::default()
             };
             let client = reqwest::Client::builder().no_proxy().build().unwrap();

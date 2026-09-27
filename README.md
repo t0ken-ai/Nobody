@@ -56,11 +56,15 @@ Windows 版本目前使用自定义 LLM。没有添加未经确认的云端中�
 
 浮窗定位取决于源应用暴露的选区坐标。坐标可靠时随选区滚动、离屏后收起；首次拿不到有效坐标时固定在触发时的鼠标附近，不跟着鼠标乱跑。macOS 配置了跨桌面及全屏辅助窗口行为；不同应用的坐标质量、多显示器实机表现及 Windows 磨砂效果仍需逐项验收。
 
-**LLM 设置**：填写基础地址（例如 `https://your-provider.example/v1`）、模型 ID 和 API Key。完整 `/chat/completions` 地址也可使用。本机模型支持 `http://localhost:11434/v1` 等回环地址；远程服务要求 HTTPS。密钥留空保留已存密钥，勾选删除才会移除。密钥按接口地址独立保存在 macOS Keychain / Windows Credential Manager。
+**LLM 设置**：填写基础地址（例如 `https://your-provider.example/v1`）、模型 ID 和 API Key。完整 `/chat/completions` 地址也可使用。本机模型支持 `http://localhost:11434/v1` 等回环地址；远程服务要求 HTTPS。密钥留空保留已存密钥，勾选删除才会移除。密钥按接口地址隔离，使用 `rusqlite` + `bundled-sqlcipher` 加密保存在 `~/.translateme/llm.db`（Windows 为用户主目录下的 `.translateme\llm.db`）。最后保存的引擎、接口、模型和提示词一起保存；API Key 不返回前端。
+
+数据库的随机解密密钥由 macOS Keychain / Windows Credential Manager 保管，无需恢复口令。保留用户主目录和系统凭据的本机同账户重装可自动恢复；**只有数据库文件不能换机解锁**，重装操作系统或清空凭据也不在自动恢复范围内。旧版 endpoint 密钥按需迁移，成功提交后才清理旧条目；删除会保留空标记，防止旧凭据复活。解密失败不重置原文件。
 
 设置页提供 **Z.ai GLM-5.3**（`https://api.z.ai/api/coding/paas/v4`、`glm-5.3`）和 **Kimi K3**（`https://api.kimi.com/coding/v1`、`k3`）预设。前者使用 Z.ai 海外 Coding Plan；不会自动改用按量接口。没有已保存密钥时，可读取应用进程继承的 `ZAI_KEY` / `KIMI_KEY`，仅限对应官方 Coding Plan 地址。应用不读取 shell 配置文件；从 Finder 启动通常不会继承终端环境变量，可在 API Key 字段填写并保存。
 
 **角色与翻译规则**可直接编辑并恢复默认，保存后生效。默认使用自然、简洁的美式开发者语气，保留技术关键词、代码、注释和命令。**测试连接**使用当前未保存的地址、模型、密钥和提示词，真实翻译一条固定测试句，显示模型、耗时和译文；测试不会保存配置或修改任何应用的输入。测试过程中改动配置，旧结果不再作为成功依据。
+
+LLM 调用由 `litellm-rust` 0.3 处理，使用显式自定义 provider 保留用户指定的地址和模型，不采用 SDK 默认服务路由。兼容接口需支持 SSE 流式响应；界面仍等待完整结果并校验后显示，截断／超时不回填。
 
 LLM 会接收整段选中文字（包含代码），以识别从聊天中复制但未带 Markdown 的代码段。浮窗与工作台渲染段落、列表和代码块；复制／回填使用 Markdown 原文。Markdown 仅支持被动排版，不执行 HTML、不加载图片或打开链接。
 
@@ -77,7 +81,7 @@ LLM 会接收整段选中文字（包含代码），以识别从聊天中复制�
 
 ## 开发与构建
 
-需要 Node.js 22+、Rust stable。macOS 需要 Apple Command Line Tools 或 Xcode；Windows 需要 Visual Studio C++ Build Tools 和 WebView2。
+需要 Node.js 22+、Rust stable。macOS 需要 Apple Command Line Tools 或 Xcode；Windows 需要 Visual Studio C++ Build Tools、Perl（编译随 SQLCipher 打包的 OpenSSL）和 WebView2。macOS 的 SQLCipher 使用系统 CommonCrypto，不依赖单独安装的 SQLCipher。
 
 ```sh
 npm ci
@@ -106,7 +110,7 @@ node scripts/local-build.mjs dev
 - `src-tauri/src/main.rs`：快捷键、选区防抖、请求互斥、结果展示与设置协调。
 - `selection.rs`：自动划词的鼠标动作消费、稳定等待和无须翻译内容过滤；独立于引擎与界面。
 - `popover.rs`：浮窗的选区生命周期、位置和尺寸计算；独立于翻译引擎，不存储翻译历史。
-- `config.rs`：设置验证与系统凭据存储；`document.rs`：代码片段保护。
+- `config.rs`：设置验证、旧凭据迁移与设置保存协调；`llm_store.rs`：SQLCipher 数据库与系统保管的主密钥；`document.rs`：代码片段保护。
 - `translation.rs`：系统 / LLM 翻译和输出验证。
 - `transfer/`：独立管理 LAN 发现、TLS 身份、配对、文件流和收件记录；`commands.rs` 仅为主窗口提供适配，`src/transfer.ts` 持有页面草稿。
 - `platform/`、`native/macos/Native.swift`：本机应用选择与身份匹配、系统取词及坐标、回填、系统翻译和 macOS 浮窗行为；不依赖前端 DOM。

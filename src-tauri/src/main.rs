@@ -3,6 +3,7 @@
 //! engine modules never call each other or reach into the UI.
 mod config;
 mod document;
+mod llm_store;
 mod platform;
 mod popover;
 mod selection;
@@ -149,12 +150,6 @@ async fn save_settings(
     // Reject changes during translation so an in-flight job cannot target a
     // newly selected provider, key, language or shortcut configuration.
     let _busy = start(&state)?;
-    if let Some(key) = api_key {
-        let endpoint = settings.endpoint.clone();
-        tauri::async_runtime::spawn_blocking(move || config::set_key(&endpoint, key.trim()))
-            .await
-            .map_err(|e| e.to_string())??;
-    }
     let shortcuts_changed = settings.write_shortcut != previous.write_shortcut
         || settings.read_shortcut != previous.read_shortcut;
     if shortcuts_changed {
@@ -171,7 +166,16 @@ async fn save_settings(
             return Err(format!("快捷键注册失败，已恢复原快捷键：{error}"));
         }
     }
-    if let Err(error) = config::write(&state.settings_path, &settings) {
+    // Keychain and SQLCipher KDF/I/O are blocking; keep them off the UI executor.
+    let path = state.settings_path.clone();
+    let next = settings.clone();
+    let old = previous.clone();
+    let saved =
+        tauri::async_runtime::spawn_blocking(move || config::persist(&path, &next, &old, api_key))
+            .await
+            .map_err(|_| "LLM 配置保存任务中断。".to_string())
+            .and_then(|r| r);
+    if let Err(error) = saved {
         if shortcuts_changed {
             let _ = app.global_shortcut().unregister_all();
             if let Ok((a, b)) = parse_shortcuts(&previous) {
@@ -529,7 +533,7 @@ fn main() {
         )
         .setup(|app| {
             let path = app.path().app_config_dir()?.join("settings.json");
-            let settings = config::read(&path).map_err(std::io::Error::other)?;
+            let settings = config::load_settings(&path).map_err(std::io::Error::other)?;
             let native = platform::Platform::new(&app.path().resource_dir()?)
                 .map_err(std::io::Error::other)?;
             let http = reqwest::Client::builder()

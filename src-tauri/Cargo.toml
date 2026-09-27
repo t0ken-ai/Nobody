@@ -19,6 +19,12 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+litellm-rust = "0.3"
+futures-util = "0.3"
+# SQLCipher owns the encrypted LLM file; only its random master key uses keyring.
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher"] }
+dirs = "6"
+rand = "0.9"
 tokio = { version = "1", features = ["sync", "time", "rt", "net", "io-util", "fs", "macros"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 # LAN traffic has a separate TLS identity and trust store from the LLM client.
@@ -37,6 +43,8 @@ url = "2"
 keyring = { version = "3", features = ["apple-native"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+# macOS uses CommonCrypto; bundle OpenSSL on Windows for reproducible builds.
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
 arboard = { version = "3", default-features = false }
 keyring = { version = "3", features = ["windows-native"] }
 windows = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_Controls_Dialogs", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Threading", "Win32_UI_Accessibility", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Ole", "Win32_System_Variant"] }

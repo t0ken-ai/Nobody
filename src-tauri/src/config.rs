@@ -1,5 +1,5 @@
-//! Preferences contain no secrets. The API key lives in the OS credential store
-//! and is scoped to an endpoint, so switching providers cannot leak an old key.
+//! Preferences contain no secrets. LLM profiles/keys also persist in SQLCipher
+//! outside the application install; endpoint scoping prevents provider key leaks.
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{fs, path::Path};
 
@@ -203,25 +203,98 @@ fn credential(endpoint: &str) -> Result<keyring::Entry, String> {
     keyring::Entry::new("app.translateme.desktop", &account)
         .map_err(|e| format!("无法打开系统凭据库：{e}"))
 }
-pub fn get_key(endpoint: &str) -> Result<Option<String>, String> {
+/// Legacy entries remain readable for migration. Never enumerate unrelated OS
+/// credentials; only the exact configured endpoint can be imported.
+fn legacy_key(endpoint: &str) -> Result<Option<String>, String> {
     match credential(endpoint)?.get_password() {
         Ok(key) => Ok(Some(key)),
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(e) => Err(format!("无法读取 API Key：{e}")),
     }
 }
-pub fn set_key(endpoint: &str, key: &str) -> Result<(), String> {
-    let entry = credential(endpoint)?;
-    if key.is_empty() {
-        match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(format!("无法删除 API Key：{e}")),
+/// An explicit SQL NULL is deletion, not permission to resurrect a legacy key.
+/// Successful migrations copy first, then best-effort remove the old credential.
+pub fn get_key(endpoint: &str) -> Result<Option<String>, String> {
+    let normalized = endpoint_url(endpoint)?.to_string();
+    match crate::llm_store::get_key(&normalized)? {
+        crate::llm_store::KeyState::Saved(key) => Ok(key),
+        crate::llm_store::KeyState::Missing => {
+            let key = legacy_key(endpoint)?;
+            if let Some(key) = &key {
+                crate::llm_store::save(None, Some((&normalized, key)))?;
+                if let Ok(entry) = credential(endpoint) {
+                    let _ = entry.delete_credential();
+                }
+            }
+            Ok(key)
         }
-    } else {
-        entry
-            .set_password(key)
-            .map_err(|e| format!("无法保存 API Key：{e}"))
     }
+}
+
+/// The DB is authoritative for LLM settings. The JSON copy is nonsecret legacy
+/// compatibility; reinstalling/removing that JSON still recovers the LLM profile.
+pub fn load_settings(path: &Path) -> Result<Settings, String> {
+    let mut settings = read(path)?;
+    if let Some(profile) = crate::llm_store::load_profile()? {
+        settings.engine = profile.engine;
+        settings.endpoint = profile.endpoint;
+        settings.model = profile.model;
+        settings.llm_prompt = profile.prompt;
+    }
+    Ok(settings)
+}
+
+/// Save the profile/key atomically in SQLCipher after the nonsecret preferences.
+/// On a DB failure restore the previous JSON; never report a half-save as success.
+pub fn persist(
+    path: &Path,
+    settings: &Settings,
+    previous: &Settings,
+    draft_key: Option<String>,
+) -> Result<(), String> {
+    let has_profile =
+        !settings.endpoint.trim().is_empty() || crate::llm_store::load_profile()?.is_some();
+    let normalized = if settings.endpoint.trim().is_empty() {
+        None
+    } else {
+        Some(endpoint_url(&settings.endpoint)?.to_string())
+    };
+    let mut key = draft_key.map(|key| key.trim().to_owned());
+    if key.is_none() {
+        if let Some(endpoint) = &normalized {
+            if matches!(
+                crate::llm_store::get_key(endpoint)?,
+                crate::llm_store::KeyState::Missing
+            ) {
+                key = legacy_key(endpoint)?;
+            }
+        }
+    }
+    write(path, settings)?;
+    if has_profile {
+        let profile = crate::llm_store::Profile {
+            engine: settings.engine.clone(),
+            endpoint: settings.endpoint.clone(),
+            model: settings.model.clone(),
+            prompt: settings.llm_prompt.clone(),
+        };
+        if let Err(error) =
+            crate::llm_store::save(Some(&profile), normalized.as_deref().zip(key.as_deref()))
+        {
+            return match write(path, previous) {
+                Ok(()) => Err(error),
+                Err(_) => Err(format!("{error} 非密钥设置未能回滚，请重新打开设置检查。")),
+            };
+        }
+        if key.is_some() {
+            if let Some(endpoint) = normalized {
+                if let Ok(entry) = credential(&endpoint) {
+                    let _ = entry.delete_credential();
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
