@@ -580,15 +580,19 @@ body.popup {
 .demo-footnote { display: flex; align-items: center; justify-content: space-between; padding: 14px 2px 9px; font-size: 9px; color: #a1aaa0; }
 .demo-footnote .text-button { font-size: 11px; color: #658269; gap: 7px; }
 .is-paused .typing-caret { animation-play-state: paused; }
-/* Both devices share the same selection timeline. macOS illustrates a pressed
-   finger moving across a stationary trackpad; Windows depresses the left button.
+/* Both devices share the same selection timeline. macOS illustrates three
+   fingertips moving together across a stationary pad, then lifting together.
+   Windows depresses the left button.
    Device imagery is explanatory, not a restriction on usable physical hardware. */
 .mouse-deck { height: 109px; border: 1px solid #e5e0ec; border-radius: 12px; background: radial-gradient(ellipse at 65% 50%, #f9f5ff, transparent 70%), #f1eff5; display: flex; align-items: center; justify-content: center; gap: 20px; padding-bottom: 14px; position: relative; }
 .mouse-motion { width: 78px; display: grid; place-items: center; }
 .demo-trackpad { width: 77px; height: 53px; position: relative; border: 1px solid #c6bbd1; border-bottom: 3px solid #b8aac5; border-radius: 8px; background: linear-gradient(140deg, #fff, #e8e2ed); box-shadow: 0 4px 5px #4d36551c, inset 0 1px 1px #fff; }
-.trackpad-trail { position: absolute; left: 17px; top: 29px; height: 2px; width: var(--finger-shift, 0px); border-radius: 2px; background: #a28ab6; opacity: 0; }
-.trackpad-contact { position: absolute; left: 12px; top: 24px; width: 12px; height: 12px; border: 1px solid #9d81b4; border-radius: 50%; box-shadow: 0 0 0 4px #a18ab526; opacity: 0; transform: translateX(var(--finger-shift, 0px)); }
-.trackpad-finger { position: absolute; left: 10px; top: 6px; width: 16px; height: 26px; border: 1px solid #c0afce; border-radius: 9px 9px 7px 7px; background: linear-gradient(110deg, #e3d6ee, #b9a3ce); box-shadow: 0 3px 3px #503a6525; transform: translate(var(--finger-shift, 0px), -6px); opacity: .6; transition: opacity .2s; }
+.trackpad-digit { --finger-top: 9px; position: absolute; left: calc(5px + var(--finger-index) * 15px); top: 0; }
+.trackpad-digit:nth-child(2) { --finger-top: 4px; }
+.trackpad-digit:nth-child(3) { --finger-top: 8px; }
+.trackpad-trail { position: absolute; left: 5px; top: 33px; height: 2px; width: var(--finger-shift, 0px); border-radius: 2px; background: #a28ab6; opacity: 0; }
+.trackpad-contact { position: absolute; left: 0; top: 27px; width: 12px; height: 12px; border: 1px solid #9d81b4; border-radius: 50%; box-shadow: 0 0 0 4px #a18ab526; opacity: 0; transform: translateX(var(--finger-shift, 0px)); }
+.trackpad-finger { position: absolute; left: 0; top: var(--finger-top); width: 12px; height: calc(33px - var(--finger-top)); border: 1px solid #c0afce; border-radius: 8px 8px 6px 6px; background: linear-gradient(110deg, #e3d6ee, #b9a3ce); box-shadow: 0 3px 3px #503a6525; transform: translate(var(--finger-shift, 0px), -6px); opacity: .6; transition: opacity .2s; }
 .is-selecting .trackpad-finger { opacity: 1; transform: translateX(var(--finger-shift, 0px)); }
 .is-selecting .trackpad-contact, .is-selecting .trackpad-trail { opacity: 1; }
 .is-result .trackpad-finger { opacity: .25; }

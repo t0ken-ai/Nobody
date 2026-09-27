@@ -17,6 +17,10 @@ const source = "请在请求失败时显示错误，并允许重试。";
 const translated = "Show an error when the request fails and allow retrying.";
 const duration = 10400;
 
+// Three decorative fingers share one timeline, illustrating macOS three-finger
+// drag when enabled in system settings. This never configures input gestures.
+const trackpadFingers = [0, 1, 2].map(index => `<span class="trackpad-digit" style="--finger-index:${index}"><span class="trackpad-trail"></span><span class="trackpad-contact"></span><span class="trackpad-finger"></span></span>`).join("");
+
 /** The scenes share playback controls. Writing uses keys; reading shows the
  * pointer-based automatic-selection flow, which must never imply a required chord.
  * Animated content is decorative; a stable accessible description avoids a
@@ -39,7 +43,7 @@ export function demoMarkup(): string {
         `}
       </div>
       <div class="keyboard-area" aria-hidden="true"><div class="keyboard-label"><span class="keyboard-action">${mode === "write" ? "输入你的想法" : "按住并拖选文字"}</span><span class="shortcut-label" ${mode === "write" ? 'id="write-shortcut"' : ""}>${mode === "read" ? "无需按键" : ""}</span></div>
-        ${mode === "write" ? `<div class="keyboard-deck"><div class="key-row ghost-keys">${"QWERTYUIOP".split("").map(key => `<span>${key}</span>`).join("")}</div><div class="shortcut-keys"></div></div>` : `<div class="mouse-deck"><div class="mouse-motion"><div class="demo-trackpad"><span class="trackpad-trail"></span><span class="trackpad-contact"></span><span class="trackpad-finger"></span></div><div class="demo-mouse"><span class="mouse-left"></span><span class="mouse-wheel"></span></div></div><div class="automatic-path"><span class="path-track"><i></i></span><span class="auto-spark">✦</span><span class="path-track"><i></i></span></div><div class="auto-result-icon"><span></span><span></span><span></span><i>${check}</i></div><div class="mouse-captions"><span class="device-caption">拖选 · 松开</span><span>自动翻译</span></div></div>`}
+        ${mode === "write" ? `<div class="keyboard-deck"><div class="key-row ghost-keys">${"QWERTYUIOP".split("").map(key => `<span>${key}</span>`).join("")}</div><div class="shortcut-keys"></div></div>` : `<div class="mouse-deck"><div class="mouse-motion"><div class="demo-trackpad">${trackpadFingers}</div><div class="demo-mouse"><span class="mouse-left"></span><span class="mouse-wheel"></span></div></div><div class="automatic-path"><span class="path-track"><i></i></span><span class="auto-spark">✦</span><span class="path-track"><i></i></span></div><div class="auto-result-icon"><span></span><span></span><span></span><i>${check}</i></div><div class="mouse-captions"><span class="device-caption">拖选 · 松开</span><span>自动翻译</span></div></div>`}
       </div>
       <footer class="demo-controls"><div class="demo-steps"><span>01 ${mode === "write" ? "输入" : "划选"}</span><i></i><span>02 ${mode === "write" ? "快捷键" : "松开"}</span><i></i><span>03 ${mode === "write" ? "回填" : "译文"}</span></div><div><button class="demo-toggle" aria-label="暂停${mode === "write" ? "写入" : "划词"}演示" title="暂停">${pause}</button><button class="demo-replay" aria-label="重播${mode === "write" ? "写入" : "划词"}演示" title="重播">${replay}</button></div></footer>
       <div class="demo-progress" aria-hidden="true"><span></span></div>
@@ -103,7 +107,8 @@ export function mountDemos() {
       scene.root.classList.toggle("is-selecting", t >= 700 && t < 2400);
       scene.root.classList.toggle("is-settling", t >= 2400 && t < 3400);
       scene.root.style.setProperty("--mouse-shift", `${(selection - .5) * 14}px`);
-      scene.root.style.setProperty("--finger-shift", `${selection * 34}px`);
+      // Keep all three fingertips inside the 77 px pad throughout the drag.
+      scene.root.style.setProperty("--finger-shift", `${selection * 22}px`);
       scene.root.style.setProperty("--settled", `${Math.min(1, Math.max(0, (t - 2400) / 1000)) * 100}%`);
     }
     if (scene.stage !== stage) {
@@ -113,7 +118,7 @@ export function mountDemos() {
         ? scene.mode === "write" ? "英文已回填，随时发送" : "译文就在原文上方"
         : scene.mode === "write" ? "从一个想法开始" : "遇到一句想读懂的话";
       scene.action.textContent = stage === "prepare"
-        ? scene.mode === "write" ? "输入你的想法" : platform === "macOS" ? "按住触控板，拖选文字" : "按住鼠标，拖选文字"
+        ? scene.mode === "write" ? "输入你的想法" : platform === "macOS" ? "三指轻触，拖选文字" : "按住鼠标，拖选文字"
         : result ? scene.mode === "write" ? "已回填 · 不自动发送" : "自动显示 · 原文保留" : writing ? "按下组合键" : "已松开，等待选区稳定";
     }
   }
@@ -201,8 +206,8 @@ export function mountDemos() {
           renderShortcut(scene.root.querySelector(".shortcut-label")!, write, platform);
           renderShortcut(scene.root.querySelector(".shortcut-keys")!, write, platform, true);
         } else {
-          scene.root.querySelector(".device-caption")!.textContent = platform === "macOS" ? "触控板 · 拖选" : "鼠标 · 拖选";
-          scene.root.querySelector(".sr-only")!.textContent = `演示：使用${platform === "macOS" ? "触控板" : "鼠标"}拖选英文并松开，选区稳定后自动在上方显示译文，无需快捷键。`;
+          scene.root.querySelector(".device-caption")!.textContent = platform === "macOS" ? "触控板 · 三指拖移" : "鼠标 · 拖选";
+          scene.root.querySelector(".sr-only")!.textContent = `演示：${platform === "macOS" ? "开启系统三指拖移后，使用触控板三指" : "使用鼠标"}拖选英文并松开，选区稳定后自动在上方显示译文，无需快捷键。`;
         }
         // Refresh cached captions when native status arrives after first paint.
         scene.stage = "";
