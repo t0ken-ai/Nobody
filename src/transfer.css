@@ -1,0 +1,109 @@
+/* LAN UI inherits the application's system appearance. Local tokens keep this
+   feature isolated from the translation popup and the tutorial palettes. */
+#transfer { --lan-surface:#ffffffb8; --lan-soft:#edf3ee; --lan-border:#dce6de; --lan-text:#263f31; --lan-secondary:#708678; --lan-inset:#f7faf7; }
+.lan-status { font-size:10px; padding:7px 11px; border-radius:20px; background:var(--lan-soft); color:var(--lan-secondary); white-space:nowrap; }
+.lan-status[data-state=running] { color:var(--accent); }
+.lan-status[data-state=error] { color:#a65e47; }
+#lan-notice { margin:0 0 15px; }
+.lan-grid { display:grid; grid-template-columns:260px minmax(0,1fr); gap:20px; }
+.lan-devices,.lan-compose { background:var(--lan-surface); border:1px solid var(--lan-border); border-radius:14px; padding:20px; min-width:0; }
+.lan-section-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.lan-section-heading h2 { margin:0; font-size:12px; }
+.lan-section-heading > span { color:var(--lan-secondary); font-size:10px; }
+.lan-devices > .field-help { margin:5px 0 18px; }
+.lan-peer-list { display:grid; gap:8px; }
+.lan-peer { border:1px solid transparent; border-radius:10px; background:var(--lan-inset); }
+.lan-peer.selected { border-color:var(--accent); background:var(--lan-soft); }
+.lan-peer-select { display:flex; width:100%; align-items:center; gap:10px; border:0; text-align:left; background:transparent; padding:12px 10px; color:var(--lan-text); }
+.lan-device-icon { font-size:31px; width:34px; text-align:center; line-height:1; color:var(--lan-secondary); }
+.lan-peer-select > span:nth-child(2) { min-width:0; flex:1; }
+.lan-peer-select strong { display:block; font-size:12px; overflow-wrap:anywhere; font-weight:550; }
+.lan-peer-select small { display:block; margin-top:3px; font-size:9px; color:var(--lan-secondary); }
+.lan-peer-id { display:block; margin-top:2px; font:8px ui-monospace,monospace; color:var(--lan-secondary); opacity:.85; }
+.lan-peer-select > i { width:5px; height:5px; background:var(--accent); border-radius:50%; }
+.lan-peer.offline .lan-peer-select > i { background:var(--lan-secondary); opacity:.5; }
+.lan-forget { margin:0 12px 9px auto; font-size:9px; }
+.lan-device-hint { font-size:10px; color:var(--lan-secondary); line-height:1.7; margin-top:20px; }
+.lan-empty { min-height:178px; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; color:var(--lan-secondary); }
+.lan-empty > span { font-size:44px; font-weight:300; opacity:.65; }
+.lan-empty strong { font-size:11px; font-weight:500; margin:4px 0 7px; }
+.lan-empty p { font-size:10px; line-height:1.7; max-width:185px; }
+.lan-compose > .lan-section-heading { margin-bottom:15px; }
+#lan-destination { color:var(--accent); }
+#lan-text { width:100%; height:137px; resize:vertical; min-height:100px; max-height:340px; border:1px solid var(--lan-border); border-radius:9px; padding:12px 14px; background:var(--lan-inset); color:var(--lan-text); line-height:1.7; }
+#lan-text::placeholder { color:var(--lan-secondary); }
+.lan-drop { display:flex; align-items:center; justify-content:center; gap:14px; width:100%; border:1px dashed var(--lan-border); background:transparent; border-radius:9px; margin-top:12px; padding:18px 12px; color:var(--lan-secondary); }
+.lan-drop:hover,.lan-drop.dragging { background:var(--lan-soft); border-color:var(--accent); }
+.lan-drop-icon { font-size:24px; font-weight:300; }
+.lan-drop strong { display:block; font-size:11px; font-weight:500; }
+.lan-drop small { display:block; font-size:9px; margin-top:4px; }
+.lan-file-list { list-style:none; padding:0; margin:8px 0 0; max-height:160px; overflow:auto; }
+.lan-file-list li { display:flex; align-items:center; gap:10px; padding:5px 0; color:var(--lan-text); }
+.lan-file-symbol { color:var(--accent); }
+.lan-file-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+.lan-file-list small { color:var(--lan-secondary); font-size:9px; }
+.lan-send-row { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:15px; }
+.lan-send-row .field-help { margin:0; font-size:9px; }
+.lan-send-row > div { display:flex; gap:16px; align-items:center; }
+.lan-preferences { border:1px solid var(--lan-border); border-radius:10px; margin-top:18px; background:var(--lan-surface); }
+.lan-preferences summary { padding:13px 18px; font-size:11px; cursor:pointer; color:var(--lan-text); }
+.lan-preferences summary > span { float:right; font-size:10px; color:var(--lan-secondary); }
+.lan-settings-body { padding:0 18px 18px; }
+.lan-directory { display:flex; align-items:center; justify-content:space-between; gap:14px; }
+.lan-directory > div { min-width:0; }
+#lan-directory-path { font:10px/1.6 ui-monospace,monospace; color:var(--lan-text); overflow-wrap:anywhere; margin-top:3px; }
+.lan-inbox-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:27px 0 12px; }
+.lan-inbox-heading h2 { margin:0; }
+.lan-inbox-heading p { margin:4px 0 0; }
+.lan-record-actions { display:flex; gap:18px; align-items:center; }
+.lan-tabs { display:flex; gap:3px; padding:3px; background:var(--lan-soft); border-radius:8px; }
+.lan-tabs button { border:0; background:transparent; color:var(--lan-secondary); padding:5px 10px; border-radius:5px; font-size:10px; }
+.lan-tabs button.active { background:var(--lan-surface); color:var(--accent); box-shadow:0 1px 3px #173a2010; }
+.lan-records { display:grid; gap:10px; }
+.lan-empty-records { border:1px dashed var(--lan-border); border-radius:10px; padding:25px; color:var(--lan-secondary); font-size:11px; text-align:center; }
+.lan-record { border:1px solid var(--lan-border); background:var(--lan-surface); border-radius:10px; padding:15px 18px; }
+.lan-record-heading { display:flex; gap:10px; align-items:center; }
+.lan-record-direction { font-size:20px; color:var(--accent); }
+.lan-record-heading > div { flex:1; min-width:0; }
+.lan-record-heading strong { display:block; font-weight:550; font-size:11px; overflow-wrap:anywhere; }
+.lan-record-heading small { font-size:9px; color:var(--lan-secondary); }
+.lan-phase { color:var(--lan-secondary); font-size:10px; }
+.lan-phase.completed { color:var(--accent); }
+.lan-phase.failed,.lan-record-error { color:#a55c44; }
+.lan-progress { height:3px; background:var(--lan-soft); border-radius:5px; margin-top:13px; overflow:hidden; }
+.lan-progress > span { display:block; height:100%; background:var(--accent); transition:width .2s ease; }
+.lan-preview { margin:12px 0 7px; padding:10px 12px; background:var(--lan-inset); border-radius:6px; color:var(--lan-text); font:11px/1.65 ui-monospace,monospace; white-space:pre-wrap; overflow-wrap:anywhere; max-height:120px; overflow:auto; }
+.lan-text-actions { display:flex; gap:16px; justify-content:flex-end; }
+.lan-received-files { margin:9px 0 0; padding:0; list-style:none; }
+.lan-received-files li { display:flex; align-items:center; gap:12px; padding:5px 0; font-size:11px; }
+.lan-received-files li > span { min-width:0; flex:1; overflow-wrap:anywhere; }
+.lan-received-files small { font-size:9px; color:var(--lan-secondary); }
+.lan-record-error { font-size:10px; margin-top:8px; overflow-wrap:anywhere; }
+.lan-pairing { display:grid; grid-template-columns:1fr auto; gap:15px 20px; border:1px solid #9dbcaa; border-radius:12px; padding:20px; background:var(--lan-soft); margin-bottom:18px; }
+.lan-pairing h2 { font-size:16px; margin:6px 0; overflow-wrap:anywhere; }
+.lan-pairing p { font-size:11px; color:var(--lan-secondary); }
+.lan-pair-code { font:550 32px/1.4 ui-monospace,monospace; letter-spacing:5px; color:var(--lan-text); align-self:center; white-space:nowrap; }
+.lan-pair-actions { display:flex; gap:10px; align-items:center; }
+.lan-pair-help { align-self:center; max-width:480px; }
+.lan-text-dialog { width:min(680px,90vw); max-height:80vh; border:1px solid var(--lan-border); border-radius:12px; padding:22px; background:var(--lan-inset); color:var(--lan-text); box-shadow:0 20px 60px #0003; }
+.lan-text-dialog::backdrop { background:#091d1660; backdrop-filter:blur(5px); }
+#lan-full-text { max-height:50vh; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.8 ui-monospace,monospace; margin:20px 0; }
+@media (prefers-color-scheme: dark) {
+  #transfer { --lan-surface:#202c24; --lan-soft:#2a4031; --lan-border:#405748; --lan-text:#dfede2; --lan-secondary:#a5bbad; --lan-inset:#19271f; }
+  .lan-status[data-state=error],.lan-phase.failed,.lan-record-error { color:#efb49e; }
+  .lan-pairing { border-color:#648971; }
+}
+@media (max-width:900px) {
+  .lan-grid { grid-template-columns:215px minmax(0,1fr); gap:14px; }
+  .lan-devices,.lan-compose { padding:15px; }
+  .lan-send-row > .field-help { max-width:40%; }
+}
+@media (max-width:650px) {
+  .lan-grid { grid-template-columns:1fr; }
+  .lan-peer-list { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .lan-pairing { grid-template-columns:1fr; }
+  .lan-inbox-heading { align-items:flex-start; flex-direction:column; }
+  .lan-record-actions { justify-content:space-between; width:100%; }
+  .lan-status { display:none; }
+}
+@media (prefers-reduced-motion:reduce) { .lan-progress > span { transition:none; } }

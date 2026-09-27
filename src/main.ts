@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./style.css";
 import { demoMarkup, mountDemos } from "./demos";
+import { transferMarkup, mountTransfer } from "./transfer";
 
 /** Custom entries come only from the native app picker. Presets can remain
  * configured before installation; their identity never depends on a label. */
@@ -83,6 +84,7 @@ let status: Status | undefined;
 let latest: Result | undefined;
 let busy = false;
 let demos: ReturnType<typeof mountDemos> | undefined;
+let transfer: ReturnType<typeof mountTransfer> | undefined;
 
 /** Measure content, not the current window height, to avoid a resize feedback
  * loop. Native placement limits the final height to the available screen space. */
@@ -149,7 +151,7 @@ if (popup) {
 } else {
   $("app").innerHTML = `
     <main class="workspace">
-      <header class="topbar"><div class="brand"><span class="brand-symbol">${icon("translate")}</span><span>TranslateMe<span class="brand-divider">/</span><small>语言之间，思路不断</small></span></div><nav aria-label="主导航"><button id="nav-demos" class="nav-item active" aria-current="page">使用演示</button><button id="nav-workbench" class="nav-item">翻译工作台</button><button id="nav-settings" class="nav-item" aria-label="偏好设置">${icon("settings")}</button></nav></header>
+      <header class="topbar"><div class="brand"><span class="brand-symbol">${icon("translate")}</span><span>TranslateMe<span class="brand-divider">/</span><small>语言之间，思路不断</small></span></div><nav aria-label="主导航"><button id="nav-demos" class="nav-item active" aria-current="page">使用演示</button><button id="nav-workbench" class="nav-item">翻译工作台</button><button id="nav-transfer" class="nav-item">局域网互传</button><button id="nav-settings" class="nav-item" aria-label="偏好设置">${icon("settings")}</button></nav></header>
       <div class="page-content">
         <section id="demos">
           <div class="heading-row"><div><div class="eyebrow"><span></span> THINK IN YOUR LANGUAGE</div><h1>想法，不必绕远路<span>。</span></h1><p class="subtitle">写下你想说的，读懂你想看的。</p></div><span class="demo-badge"><span></span>交互演示</span></div>
@@ -165,6 +167,7 @@ if (popup) {
           </div>
           <div class="action-row"><span class="privacy-note" id="engine-note">系统翻译在本机处理；首次使用可能需要下载语言包。</span><button id="translate" class="button primary">翻译成英文 ${icon("arrow")}</button></div>
         </section>
+        <section id="transfer" hidden>${transferMarkup()}</section>
         <section id="settings" hidden>
           <div class="eyebrow">MAKE IT YOURS</div><h1>让它，更合你的习惯。</h1><p class="subtitle">翻译引擎、阅读语言和触发方式，都在这里。</p>
           <form id="settings-form">
@@ -184,16 +187,20 @@ if (popup) {
   demos.setWriteShortcut("CommandOrControl+Shift+E");
   /** Keep each view mounted so navigation preserves draft text and unsaved
    * settings. Only the visible tutorial may consume animation frames. */
-  function navigate(view: "demos" | "workbench" | "settings") {
-    for (const name of ["demos", "workbench", "settings"]) {
+  function navigate(view: "demos" | "workbench" | "settings" | "transfer") {
+    for (const name of ["demos", "workbench", "transfer", "settings"]) {
       $(name).hidden = name !== view;
       $(`nav-${name}`).classList.toggle("active", name === view);
       if (name === view) $(`nav-${name}`).setAttribute("aria-current", "page");
       else $(`nav-${name}`).removeAttribute("aria-current");
     }
     demos?.setVisible(view === "demos");
+    if (view === "transfer") transfer?.show();
+    $("permission-banner").hidden = view === "transfer";
     notice("");
   }
+  transfer = mountTransfer($("transfer"), () => navigate("transfer"));
+  $("nav-transfer").onclick = () => navigate("transfer");
   $("nav-demos").onclick = () => navigate("demos");
   $("nav-workbench").onclick = () => navigate("workbench");
   $("nav-settings").onclick = () => navigate("settings");

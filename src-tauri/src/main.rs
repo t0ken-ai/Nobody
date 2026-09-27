@@ -6,6 +6,7 @@ mod document;
 mod platform;
 mod popover;
 mod selection;
+mod transfer;
 mod translation;
 
 use serde::{Deserialize, Serialize};
@@ -482,6 +483,9 @@ fn watch_selection(app: tauri::AppHandle) {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -537,7 +541,7 @@ fn main() {
             )?;
             let quit = tauri::menu::MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = tauri::menu::Menu::with_items(app, &[&open, &quit])?;
-            tauri::tray::TrayIconBuilder::new()
+            tauri::tray::TrayIconBuilder::with_id("main-tray")
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("TranslateMe · 写英文，读母语")
                 .menu(&menu)
@@ -568,6 +572,8 @@ fn main() {
             }
             #[cfg(not(target_os = "macos"))]
             watch_selection(app.handle().clone());
+            // LAN state and failures stay separate from translation state.
+            transfer::commands::install(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -589,8 +595,27 @@ fn main() {
             get_last_result,
             drag_popover,
             dismiss_popover,
-            resize_popover
+            resize_popover,
+            transfer::commands::get_transfer_state,
+            transfer::commands::save_transfer_settings,
+            transfer::commands::retry_transfer_service,
+            transfer::commands::send_transfer,
+            transfer::commands::answer_transfer_pairing,
+            transfer::commands::forget_transfer_peer,
+            transfer::commands::cancel_transfer,
+            transfer::commands::read_transfer_text,
+            transfer::commands::clear_transfer_records,
+            transfer::commands::reveal_transfer_file,
+            transfer::commands::mark_transfer_seen,
+            transfer::commands::inspect_transfer_files,
+            transfer::commands::pick_transfer_files,
+            transfer::commands::pick_transfer_directory
         ])
-        .run(tauri::generate_context!())
-        .expect("TranslateMe could not start");
+        .build(tauri::generate_context!())
+        .expect("TranslateMe could not start")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                transfer::commands::shutdown(app);
+            }
+        });
 }

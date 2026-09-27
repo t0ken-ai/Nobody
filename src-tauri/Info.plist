@@ -3,4 +3,7 @@
 <plist version="1.0"><dict>
 <key>NSHumanReadableCopyright</key><string>TranslateMe</string>
 <key>NSHighResolutionCapable</key><true/>
+<!-- Discovery and direct transfer are isolated to user-enabled LAN sharing. -->
+<key>NSLocalNetworkUsageDescription</key><string>发现同一局域网内的 TranslateMe 电脑，并传输你选择的文字和文件。</string>
+<key>NSBonjourServices</key><array><string>_translateme._tcp</string></array>
 </dict></plist>
