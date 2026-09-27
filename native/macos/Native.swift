@@ -8,6 +8,7 @@ import Foundation
 import Darwin
 import NaturalLanguage
 import UniformTypeIdentifiers
+import OSLog
 #if canImport(Translation)
 import SwiftUI
 import Translation
@@ -26,6 +27,10 @@ private func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
 }
 
 private func textAttribute(_ element: AXUIElement, _ name: String) -> String? { attribute(element, name) as? String }
+private func parameterizedAttribute(_ element: AXUIElement, _ name: String, _ parameter: CFTypeRef) -> CFTypeRef? {
+    var value: CFTypeRef?
+    return AXUIElementCopyParameterizedAttributeValue(element, name as CFString, parameter, &value) == .success ? value : nil
+}
 private func isSettable(_ element: AXUIElement, _ name: String) -> Bool {
     var writable = DarwinBoolean(false)
     return AXUIElementIsAttributeSettable(element, name as CFString, &writable) == .success && writable.boolValue
@@ -335,6 +340,171 @@ private func focused() throws -> (NSRunningApplication, AXUIElement) {
 }
 
 enum NativeError: Error { case message(String) }
+
+/// Layout separators supplied by AX are not restricted to Unix LF. CRLF is a
+/// single Swift Character; recognize it without splitting Unicode graphemes.
+private func selectionLineBreak(_ character: Character) -> Bool {
+    character.unicodeScalars.allSatisfy { [10, 13, 0x85, 0x2028, 0x2029].contains($0.value) }
+}
+
+/// Insert only proven boundaries, preserving every original byte and existing
+/// separator. UTF-16 offsets from AX must land between complete graphemes, never
+/// inside an emoji/surrogate pair. Adjacent existing breaks already carry layout.
+private func insertingSelectionBreaks(_ text: String, _ breaks: [Int: Int]) -> String? {
+    let boundaries = Dictionary(uniqueKeysWithValues: text.indices.map { ($0.utf16Offset(in: text), $0) })
+    var output = ""
+    var cursor = text.startIndex
+    for offset in breaks.keys.sorted() {
+        guard offset >= 0, offset <= text.utf16.count else { return nil }
+        if offset == 0 || offset == text.utf16.count { continue }
+        guard let index = boundaries[offset], let count = breaks[offset], (1...2).contains(count) else { return nil }
+        let before = text[..<index].reversed().prefix(while: { $0.isWhitespace })
+        let after = text[index...].prefix(while: { $0.isWhitespace })
+        if before.contains(where: selectionLineBreak) || after.contains(where: selectionLineBreak) { continue }
+        output += text[cursor..<index]
+        output += String(repeating: "\n", count: count)
+        cursor = index
+    }
+    output += text[cursor...]
+    return output
+}
+
+/// A richer AX string may add layout but must describe exactly the same selected
+/// characters. Never accept missing words, changed spaces/indentation, or text
+/// from another range. Rebuild on the original rather than adopting provider text.
+private func mergingSelectionLayout(_ original: String, _ candidate: String) -> String? {
+    // Compare grapheme arrays before joining: joining first could conceal a
+    // provider inserting a newline inside a combined accent or joined emoji.
+    guard candidate.utf16.count <= 32000,
+          Array(original).filter({ !selectionLineBreak($0) }) == Array(candidate).filter({ !selectionLineBreak($0) }) else { return nil }
+    let offsets = original.indices.filter { !selectionLineBreak(original[$0]) }.map { $0.utf16Offset(in: original) }
+    var position = 0
+    var breaks: [Int: Int] = [:]
+    for character in candidate {
+        if selectionLineBreak(character) {
+            if position > 0 && position < offsets.count {
+                let extra = character == "\u{2029}" ? 2 : 1
+                breaks[offsets[position]] = min(2, (breaks[offsets[position]] ?? 0) + extra)
+            }
+        } else { position += 1 }
+    }
+    return insertingSelectionBreaks(original, breaks)
+}
+
+/// Recover paragraph boundaries once, after a selection has stabilized. This is
+/// deliberately absent from the 350 ms observer and never reads AXValue, another
+/// window, the clipboard, or visual line ranges (soft wrapping is not a paragraph).
+/// WebKit/Chromium text-marker extensions are optional capabilities: failed or
+/// inconsistent APIs leave the original selection intact.
+private func selectionLayout(_ request: [String: Any]) throws -> [String: Any] {
+    guard let expected = request["expected"] as? [String: Any],
+          let original = expected["text"] as? String, original.utf16.count <= 16000 else {
+        throw NativeError.message("选区已失效，请重新划选。")
+    }
+    let (app, element) = try focused()
+    let window = elementAttribute(element, kAXWindowAttribute)
+    let context = "\(app.processIdentifier):\(window.map { CFHash($0) } ?? 0):\(CFHash(element))"
+    let range = rangeAttribute(element)
+    let selectionId = range.map { "\(CFHash(element)):\($0.location):\($0.length)" }
+    guard expected["pid"] as? Int32 == app.processIdentifier,
+          expected["contextId"] as? String == context,
+          expected["selectionId"] as? String == selectionId,
+          textAttribute(element, kAXSelectedTextAttribute) == original else {
+        throw NativeError.message("选区已变化，请重新划选。")
+    }
+    var names: CFArray?
+    AXUIElementCopyParameterizedAttributeNames(element, &names)
+    let supported = Set(names as? [String] ?? [])
+    let start = ProcessInfo.processInfo.systemUptime
+    var queries = 0
+    var layoutIssues = Set<String>()
+    // An unresponsive accessibility provider must not delay typing or cause
+    // unbounded main-thread work. The deadline is checked before every AX call.
+    AXUIElementSetMessagingTimeout(element, 0.04)
+    defer { AXUIElementSetMessagingTimeout(element, 0.25) }
+    func query(_ name: String, _ value: CFTypeRef) -> CFTypeRef? {
+        guard supported.contains(name) else { layoutIssues.insert("\(name):unsupported"); return nil }
+        guard queries < 200, ProcessInfo.processInfo.systemUptime - start < 0.20 else {
+            layoutIssues.insert("budget"); return nil
+        }
+        queries += 1
+        let result = parameterizedAttribute(element, name, value)
+        if result == nil { layoutIssues.insert("\(name):unavailable") }
+        return result
+    }
+    var enriched = original
+    var method = "plain"
+    func consider(_ value: CFTypeRef?, _ source: String) {
+        let candidate = (value as? NSAttributedString)?.string ?? (value as? String)
+        if let candidate, let merged = mergingSelectionLayout(original, candidate),
+           merged.filter({ selectionLineBreak($0) }).count > enriched.filter({ selectionLineBreak($0) }).count {
+            enriched = merged
+            method = source
+        }
+    }
+    if var selectedRange = range, selectedRange.location >= 0, selectedRange.length > 0,
+       selectedRange.length <= 16000, let value = AXValueCreate(.cfRange, &selectedRange) {
+        consider(query("AXAttributedStringForRange", value), "attributed-range")
+        consider(query("AXStringForRange", value), "text-range")
+    }
+    let markers = attribute(element, "AXSelectedTextMarkerRange")
+    if let markers {
+        consider(query("AXAttributedStringForTextMarkerRange", markers), "attributed-markers")
+        consider(query("AXStringForTextMarkerRange", markers), "text-markers")
+    }
+
+    // On some web views even attributed text concatenates adjacent <p> nodes.
+    // Use the actual selection's opaque endpoints: AXSelectedTextRange offsets
+    // can be node-local while AXTextMarkerForIndex expects a document offset.
+    // Normalizing endpoint order also covers selections dragged backwards.
+    // Apple's marker functions are available on every supported macOS (13+).
+    if let markers, CFGetTypeID(markers) == AXTextMarkerRangeGetTypeID(),
+       case let markerRange = unsafeBitCast(markers, to: AXTextMarkerRange.self),
+       let selected = query("AXTextMarkerRangeForUnorderedTextMarkers",
+            [AXTextMarkerRangeCopyStartMarker(markerRange), AXTextMarkerRangeCopyEndMarker(markerRange)] as CFArray),
+       CFGetTypeID(selected) == AXTextMarkerRangeGetTypeID(),
+       query("AXStringForTextMarkerRange", selected) as? String == original {
+        let first = AXTextMarkerRangeCopyStartMarker(unsafeBitCast(selected, to: AXTextMarkerRange.self))
+        var marker: CFTypeRef = first
+        var previousLength = 0
+        var breaks: [Int: Int] = [:]
+        var complete = false
+        for _ in 0..<64 {
+            guard let next = query("AXNextParagraphEndTextMarkerForTextMarker", marker), !CFEqual(marker, next),
+                  let prefix = query("AXTextMarkerRangeForUnorderedTextMarkers", [first, next] as CFArray),
+                  let length = (query("AXLengthForTextMarkerRange", prefix) as? NSNumber)?.intValue,
+                  length > previousLength else { break }
+            // A final paragraph may extend beyond a partial selection. Ask for
+            // length first and stop at our boundary without reading its text.
+            if length >= original.utf16.count { complete = true; break }
+            guard let text = query("AXStringForTextMarkerRange", prefix) as? String,
+                  text.utf16.count == length, original.hasPrefix(text) else { break }
+            breaks[length] = 2
+            previousLength = length
+            marker = next
+        }
+        if complete, let recovered = insertingSelectionBreaks(original, breaks), recovered != original {
+            // Merge the independent, validated layout sources without deleting
+            // existing line breaks or replacing any of the selected characters.
+            enriched = mergingSelectionLayout(enriched, recovered) ?? enriched
+            method = "paragraph-markers"
+        }
+    }
+    let currentRange = rangeAttribute(element)
+    // Repeated identical text at another offset/control is still a new
+    // selection. Validate focus as well as characters before returning layout.
+    let (currentApp, currentElement) = try focused()
+    guard currentApp.processIdentifier == app.processIdentifier, CFEqual(currentElement, element),
+          textAttribute(element, kAXSelectedTextAttribute) == original,
+          currentRange?.location == range?.location, currentRange?.length == range?.length else {
+        throw NativeError.message("选区已变化，请重新划选。")
+    }
+    // Opt-in system debug logging records capability names/counts only. Never
+    // log selected text, app titles, document contents, or persistent copies.
+    let diagnostic = "method=\(method) range=\(range != nil) markers=\(markers != nil) sourceBreaks=\(original.filter { selectionLineBreak($0) }.count) resultBreaks=\(enriched.filter { selectionLineBreak($0) }.count) queries=\(queries) issues=\(layoutIssues.sorted().joined(separator: ","))"
+    Logger(subsystem: "app.translateme.desktop", category: "selection-layout").debug("\(diagnostic, privacy: .public)")
+    return ["text": enriched, "layoutSource": method]
+}
 
 /// Read only the selected range's rectangle. Some Chromium controls expose
 /// text-marker ranges instead of UTF-16 ranges; neither path reads the window's
@@ -745,6 +915,7 @@ public func nativeRequest(_ json: UnsafePointer<CChar>, _ reply: @escaping @conv
                 // lost source selection. No other application's text is read.
                 respond(["self": true], reply, context)
             case "capture", "selection": respond(try capture(request), reply, context)
+            case "selectionLayout": respond(try selectionLayout(request), reply, context)
             case "replace": try replace(request, reply, context)
             case "copy":
                 NSPasteboard.general.clearContents()

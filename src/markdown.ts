@@ -19,7 +19,12 @@ const markdown = new Marked({
 export function renderTranslation(node: HTMLElement, text: string, formatted: boolean) {
   node.classList.toggle("markdown", formatted);
   node.classList.toggle("empty", !text);
-  if (!formatted) { node.textContent = text; return; }
+  if (!formatted) {
+    // AX paragraph separators are not rendered consistently as HTML line
+    // breaks. Normalize only the display; copy/backfill retain the source bytes.
+    node.textContent = text.replace(/\r\n|[\r\u0085\u2028]/g, "\n").replace(/\u2029/g, "\n\n");
+    return;
+  }
   const html = markdown.parse(text, { async: false });
   node.innerHTML = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: ["p", "br", "strong", "em", "del", "pre", "code", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "blockquote", "hr", "table", "thead", "tbody", "tr", "th", "td", "a"],

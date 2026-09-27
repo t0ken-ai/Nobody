@@ -95,8 +95,12 @@ impl Document {
     }
 }
 
+/// Accessibility providers can use CR, NEL, or Unicode line/paragraph separators
+/// instead of LF. Keep every separator outside the provider request so a system
+/// translator cannot flatten it. Splitting CRLF twice is safe: both bytes remain
+/// adjacent immutable layout fragments and restore exactly as they arrived.
 fn split_prose(text: &str, parts: &mut Vec<(bool, String)>) {
-    for line in text.split_inclusive('\n') {
+    for line in text.split_inclusive(['\n', '\r', '\u{0085}', '\u{2028}', '\u{2029}']) {
         let start = line.len() - line.trim_start().len();
         let end = line.trim_end().len();
         if start >= end || !line[start..end].chars().any(char::is_alphabetic) {
@@ -140,6 +144,18 @@ mod tests {
         let input = "　修复 getUserName 中的 MAX_RETRY 和 user_id。\n";
         let d = Document::parse(input);
         assert_eq!(d.restore(d.prose()).unwrap(), input);
+    }
+    #[test]
+    fn system_provider_never_receives_paragraph_separators() {
+        // Model a provider that returns a single line per request. Layout must
+        // survive independently of that behavior, including Windows CRLF.
+        for separator in ["\n", "\n\n", "\r\n", "\r", "\u{0085}", "\u{2028}", "\u{2029}"] {
+            let input = format!("Keep existing data.{separator}Allow retrying.");
+            let d = Document::parse(&input);
+            assert_eq!(d.prose(), vec!["Keep existing data.", "Allow retrying."]);
+            assert_eq!(d.restore(vec!["保留现有数据。".into(), "允许重试。".into()]).unwrap(),
+                format!("保留现有数据。{separator}允许重试。"));
+        }
     }
     #[test]
     fn platform_names_do_not_break_sentence_context() {

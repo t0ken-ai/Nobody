@@ -87,6 +87,12 @@ LLM 会接收整段选中文字（包含代码），以识别从聊天中复制�
 - LLM 返回不完整、空白、格式错误或未通过代码校验时不回填。不开启翻译历史，不记录原文、译文、API Key 或服务端响应正文。
 - 不截图、不 OCR、不读取密码框。对不支持 Accessibility/UI Automation 的软件，使用工作台。
 
+macOS 阅读翻译在真正触发时补读一次选区富文本及可用的段落边界，避免部分聊天界面的纯文字接口拼接相邻段落。只在字符、选区和焦点核对一致时补入换行；不按窗口自动折行、字体或坐标间距猜分段。WebKit/Chromium 的 text-marker 扩展并非所有应用都提供，超时、结构不足或结果不一致时保留原始选中文字。额外读取不进入后台轮询，最多 200 次受限查询、约 200 ms 查询预算（单次 AX 调用最长 40 ms）；未加入截图或剪贴板读取。系统翻译同时保护 LF、CRLF、CR、NEL、Unicode 行／段落分隔符，显示时转换为可见换行，复制和回填保留原字符。Windows 本轮仅共享分隔符保护与显示修复，尚未增加结构读取。
+
+段落恢复的 UTF-16、Emoji、范围不匹配及原文保留回归检查：`node scripts/test-selection-layout.mjs`（macOS，不读取任何应用窗口）。
+
+2026-09-28 在当前 ChatGPT / Codex 聊天中完成三段英文的真实划词验证：纯文字接口返回 0 个换行，使用选区实际起止标记恢复两个段落间隔，系统译文分成三段，用户确认显示正常。可通过系统 debug 日志的 `app.translateme.desktop / selection-layout` 分类排查能力兼容性；只记录接口状态与数量，不记录选中文字。
+
 ## 开发与构建
 
 需要 Node.js 22+、Rust stable。macOS 需要 Apple Command Line Tools 或 Xcode；Windows 需要 Visual Studio C++ Build Tools、Perl（编译随 SQLCipher 打包的 OpenSSL）和 WebView2。macOS 的 SQLCipher 使用系统 CommonCrypto，不依赖单独安装的 SQLCipher。

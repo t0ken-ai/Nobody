@@ -353,6 +353,16 @@ async fn translate_selection(
         .as_str()
         .ok_or("没有可翻译的文字。")?
         .to_string();
+    // Enrich only a committed reading selection, never each observer tick or a
+    // writable input. Keep capture untouched: popover tracking and replacement
+    // tickets must continue comparing the exact original AX text and range.
+    #[cfg(target_os = "macos")]
+    let source = if !write {
+        let layout = state.platform.call(json!({"op":"selectionLayout", "expected":&capture})).await?;
+        layout["text"].as_str().unwrap_or(&source).to_owned()
+    } else {
+        source
+    };
     let target = if write { "en" } else { &s.target_language };
     // Capture the anchor before the user moves the pointer. A translation that
     // finishes after another selection must never appear over the new text.
@@ -391,13 +401,16 @@ async fn translate_selection(
     if !state.popover.lock().unwrap().current(token) {
         return Ok(());
     }
+    // Make recovered layout visible without exposing native API details or
+    // retaining a diagnostic copy of the user's selected text on disk.
+    let layout_restored = !write && capture["text"].as_str() != Some(source.as_str());
     let mut result = TranslationResult {
         source,
         text: translated,
         target: target.into(),
         engine: s.engine,
         origin: capture["app"].as_str().unwrap_or("当前应用").into(),
-        message: "翻译完成".into(),
+        message: if layout_restored { "翻译完成 · 已恢复分段" } else { "翻译完成" }.into(),
         replaced: false,
     };
     if write {
