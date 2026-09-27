@@ -4,6 +4,7 @@ import AppKit
 import ApplicationServices
 import Foundation
 import NaturalLanguage
+import UniformTypeIdentifiers
 #if canImport(Translation)
 import SwiftUI
 import Translation
@@ -43,15 +44,94 @@ private struct Snapshot {
 }
 private var snapshots: [String: Snapshot] = [:]
 
-/// Match the installed application identity, never a document/window title.
-/// Claude Desktop includes its Code view; terminal hosts and URL handlers are
-/// deliberately not aliases for Claude Desktop or Codex.
-private func productKey(_ app: NSRunningApplication) -> String? {
-    switch app.bundleIdentifier {
-    case "com.openai.codex": return "codex"
-    case "com.anthropic.claudefordesktop": return "claude"
-    default: return nil
+/// Presets identify the official clients, not similarly named wrappers. A
+/// custom selection additionally binds to its canonical app-bundle location.
+private let presetBundles = ["chatgpt": "com.openai.chat", "claude": "com.anthropic.claudefordesktop"]
+private func applicationAllowed(_ app: NSRunningApplication, _ allowed: [Any]) -> Bool {
+    allowed.contains { entry in
+        if let preset = entry as? String {
+            return presetBundles[preset].map { $0 == app.bundleIdentifier } ?? false
+        }
+        guard let local = entry as? [String: Any], local["platform"] as? String == "macOS",
+              let path = local["path"] as? String, let bundle = local["bundleId"] as? String,
+              let url = app.bundleURL else { return false }
+        return bundle == app.bundleIdentifier && url.resolvingSymlinksInPath().standardizedFileURL.path == path
     }
+}
+
+/// Resolve a chosen local bundle without launching it or reading its documents.
+/// Aliases/symlinks are normalized once; network volumes and ordinary folders
+/// are rejected even if a caller bypasses the Open panel's extension filter.
+private func applicationDescriptor(_ selected: URL) throws -> [String: Any] {
+    let values = try selected.resourceValues(forKeys: [.isAliasFileKey])
+    let resolved = values.isAliasFile == true
+        ? try URL(resolvingAliasFileAt: selected, options: [.withoutUI, .withoutMounting]) : selected
+    let url = resolved.resolvingSymlinksInPath().standardizedFileURL
+    let properties = try url.resourceValues(forKeys: [.volumeIsLocalKey, .isDirectoryKey])
+    guard url.isFileURL, properties.volumeIsLocal == true, properties.isDirectory == true,
+          url.pathExtension.lowercased() == "app", let bundle = Bundle(url: url),
+          let identity = bundle.bundleIdentifier, !identity.isEmpty,
+          bundle.object(forInfoDictionaryKey: "CFBundlePackageType") as? String == "APPL",
+          let executable = bundle.executableURL, FileManager.default.isExecutableFile(atPath: executable.path) else {
+        throw NativeError.message("请选择本机已安装的 .app 应用。")
+    }
+    // Use the installed bundle's filename: some products retain another app's
+    // CFBundleName internally (e.g. Codex), which would mislabel the allowlist.
+    return ["name": url.deletingPathExtension().lastPathComponent, "path": url.path,
+            "platform": "macOS", "bundleId": identity]
+}
+
+/// Missing defaults remain visible and can begin working after installation.
+/// Lookup verifies the bundle ID, so ChatGPT-named third-party apps stay out.
+private func defaultApplications() -> [String: Any] {
+    var result: [String: Any] = [:]
+    for (key, identity) in presetBundles {
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identity),
+           let app = try? applicationDescriptor(url), app["bundleId"] as? String == identity {
+            result[key] = app
+        } else { result[key] = NSNull() }
+    }
+    return result
+}
+
+/// Recheck picker output before saving. Never silently accept a replacement app
+/// at the same path with a different identity. Presets need not be installed.
+private func validateApplications(_ entries: [Any]) throws {
+    for entry in entries {
+        if let preset = entry as? String, presetBundles[preset] != nil { continue }
+        guard let local = entry as? [String: Any], local["platform"] as? String == "macOS",
+              let path = local["path"] as? String else { throw NativeError.message("请选择这台 Mac 上的应用。") }
+        let actual = try applicationDescriptor(URL(fileURLWithPath: path))
+        guard actual["path"] as? String == path, actual["bundleId"] as? String == local["bundleId"] as? String else {
+            throw NativeError.message("应用的位置或身份已改变，请移除后重新添加。")
+        }
+    }
+}
+
+/// The asynchronous panel leaves selection polling and the main run loop free.
+/// Cancellation returns an empty list and never modifies saved preferences.
+private func pickApplications(_ reply: @escaping Reply, _ context: UnsafeMutableRawPointer?) {
+    let panel = NSOpenPanel()
+    panel.title = "添加可自动翻译的应用"
+    panel.prompt = "添加应用"
+    panel.message = "选择本机应用；只在这些应用的阅读正文中自动划词翻译。"
+    panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
+    panel.allowedContentTypes = [.applicationBundle]
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = false
+    panel.allowsMultipleSelection = true
+    panel.canCreateDirectories = false
+    panel.treatsFilePackagesAsDirectories = false
+    let completion: (NSApplication.ModalResponse) -> Void = { result in
+        guard result == .OK else { respond(["apps": []], reply, context); return }
+        do {
+            let apps = try panel.urls.map { try applicationDescriptor($0) }
+            respond(["apps": apps], reply, context)
+        } catch { respond(["error": error.localizedDescription], reply, context) }
+    }
+    if let window = NSApp.keyWindow {
+        panel.beginSheetModal(for: window, completionHandler: completion)
+    } else { panel.begin(completionHandler: completion) }
 }
 
 /// Only mouse gesture metadata is retained, in memory. No keyboard events or
@@ -59,19 +139,19 @@ private func productKey(_ app: NSRunningApplication) -> String? {
 /// intentional reading from restored ranges and programmatic select-all.
 private final class SelectionMouse {
     var monitor: Any?
-    var allowed = Set<String>()
+    var allowed: [Any] = []
     var down: (pid: pid_t, point: NSPoint, double: Bool)?
     var dragged = false
     var sequence: UInt64 = 0
     var released: (pid: pid_t, time: TimeInterval)?
 
-    func configure(_ products: [String]) {
-        allowed = Set(products)
+    func configure(_ applications: [Any]) {
+        allowed = applications
         guard monitor == nil, !allowed.isEmpty else { return }
         monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
             guard let self else { return }
             guard let app = NSWorkspace.shared.frontmostApplication,
-                  let key = productKey(app), self.allowed.contains(key) else {
+                  applicationAllowed(app, self.allowed) else {
                 self.down = nil
                 return
             }
@@ -255,9 +335,9 @@ private func configurePopover() throws {
 /// capture identity, original value and UTF-16 range for compare-before-replace.
 private func capture(_ request: [String: Any]) throws -> [String: Any] {
     let automatic = request["op"] as? String == "selection"
-    let allowed = request["allowedApps"] as? [String] ?? []
+    let allowed = request["allowedApps"] as? [Any] ?? []
     guard let foreground = NSWorkspace.shared.frontmostApplication else { return ["ignored": true] }
-    let appAllowed = productKey(foreground).map { allowed.contains($0) } ?? false
+    let appAllowed = applicationAllowed(foreground, allowed)
     let tracking = request["tracking"] as? [String: Any] ?? [:]
     // Following an explicitly requested result is allowed only for its exact
     // source PID and control. New captures in other applications stop here.
@@ -498,9 +578,13 @@ public func nativeRequest(_ json: UnsafePointer<CChar>, _ reply: @escaping @conv
         do {
             guard let request = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw NativeError.message("无效的原生请求。") }
             if request["op"] as? String == "selection" {
-                selectionMouse.configure(request["allowedApps"] as? [String] ?? [])
+                selectionMouse.configure(request["allowedApps"] as? [Any] ?? [])
             }
             switch request["op"] as? String {
+            case "pickApplications": pickApplications(reply, context)
+            case "validateApplications":
+                try validateApplications(request["apps"] as? [Any] ?? [])
+                respond(["ok": true], reply, context)
             case "configurePopover":
                 try configurePopover()
                 respond(["ok": true], reply, context)
@@ -509,7 +593,7 @@ public func nativeRequest(_ json: UnsafePointer<CChar>, _ reply: @escaping @conv
                 #if canImport(Translation)
                 if #available(macOS 15.0, *) { translation = true }
                 #endif
-                respond(["accessibility": AXIsProcessTrusted(), "systemTranslation": translation, "platform": "macOS"], reply, context)
+                respond(["accessibility": AXIsProcessTrusted(), "systemTranslation": translation, "platform": "macOS", "defaultApps": defaultApplications()], reply, context)
             case "permission":
                 let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
                 let trusted = AXIsProcessTrustedWithOptions(options)

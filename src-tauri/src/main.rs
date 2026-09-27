@@ -27,6 +27,7 @@ struct AppState {
     platform: platform::Platform,
     http: reqwest::Client,
     busy: AtomicBool,
+    picking_app: AtomicBool,
     generation: AtomicU64,
     last: Mutex<Option<TranslationResult>>,
     popover: Mutex<popover::Popover>,
@@ -69,6 +70,31 @@ async fn get_settings(state: tauri::State<'_, AppState>) -> Result<Value, String
     Ok(status)
 }
 
+/// Only the main settings window may open a chooser. Its own gate prevents
+/// overlapping panels without holding the translation lock while a user browses.
+#[tauri::command]
+async fn pick_applications(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+) -> Result<Value, String> {
+    if window.label() != "main" {
+        return Err("请在偏好设置中添加应用。".into());
+    }
+    state
+        .picking_app
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .map_err(|_| "应用选择器已经打开。")?;
+    let _guard = BusyGuard(&state.picking_app);
+    let request = json!({"op":"pickApplications"});
+    #[cfg(target_os = "windows")]
+    let request = {
+        let mut request = request;
+        request["owner"] = json!(window.hwnd().map_err(|e| e.to_string())?.0 as usize);
+        request
+    };
+    state.platform.call(request).await
+}
+
 fn parse_shortcuts(s: &config::Settings) -> Result<(Shortcut, Shortcut), String> {
     let write: Shortcut = s
         .write_shortcut
@@ -96,6 +122,10 @@ async fn save_settings(
     api_key: Option<String>,
 ) -> Result<(), String> {
     config::validate(&settings)?;
+    state
+        .platform
+        .call(json!({"op":"validateApplications", "apps":settings.automatic_apps}))
+        .await?;
     let (write, read) = parse_shortcuts(&settings)?;
     let previous = preferences(&state);
     // Reject changes during translation so an in-flight job cannot target a
@@ -491,6 +521,7 @@ fn main() {
                 platform: native,
                 http,
                 busy: AtomicBool::new(false),
+                picking_app: AtomicBool::new(false),
                 generation: AtomicU64::new(0),
                 last: Mutex::new(None),
                 popover: Mutex::new(popover::Popover::default()),
@@ -551,6 +582,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             save_settings,
+            pick_applications,
             request_permission,
             translate_text,
             copy_text,

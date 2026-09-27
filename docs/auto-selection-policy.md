@@ -2,9 +2,15 @@
 
 ## 用户确认的范围
 
-用户将自动划词范围限定为 Codex 和 Claude Desktop（后续明确为 Claude Desktop，而非终端命令或 URL Handler）。默认只勾选这两个应用，可在偏好设置分别取消。白名单只限制自动触发，工作台和明确按下的手动翻译快捷键仍可使用。
+用户最新确认默认应用是 **ChatGPT Desktop、Claude Desktop**，并允许从本机选择更多应用。白名单只限制自动触发，工作台和明确按下的手动翻译快捷键保持现有行为。
 
-macOS 使用已从本机应用 Info.plist 核对的 Bundle ID：`com.openai.codex`、`com.anthropic.claudefordesktop`。Windows 按前台 PID 解析可执行文件名，识别 `Codex.exe` / `Claude.exe`；未做 Windows 实机身份或行为验收。均不按窗口标题匹配，也不将终端加入白名单。
+macOS 默认按 Bundle ID `com.openai.chat`、`com.anthropic.claudefordesktop` 匹配。当前机器 `/Applications/ChatGPT.app` 实际为 `com.lencx.chatgpt`，`/Applications/Codex.app` 为 `com.openai.codex`，不会因同名或内部 CFBundleName 被误归为默认 ChatGPT 客户端；用户可手动选入。默认客户端尚未安装时保留该默认项，界面显示未安装。
+
+自选 macOS 应用通过原生 NSOpenPanel 添加，每次默认打开 `/Applications`，允许多选 `.app` 并浏览其他本机目录。解析别名/符号链接、检查本机卷和可执行应用包，保存规范化路径与 Bundle ID，不启动应用、不读取其文档。运行时两者必须同时一致，移动后需重新添加。Windows 使用原生文件对话框选择 `.exe`，初始目录为 Program Files；自选项按规范化完整路径匹配，排除网络路径。Windows 默认项使用 `ChatGPT.exe` / `Claude.exe` 名称身份，尚未做实际客户端身份/行为验收，不宣称已验证发布者签名。
+
+添加、移除、恢复默认先修改表单草稿，保存才生效；取消选择器不改变列表，重复选择同一应用不会重复添加。选择器不受翻译请求的超时限制，也不阻塞选区监听工作线程。保存前再次检查本机文件身份，拒绝无效或已被替换的路径。前端通过文本节点显示应用名和路径，避免文件名成为 HTML。
+
+旧 `automaticApps: ["codex", "claude"]` 迁移为 `["chatgpt", "claude"]`，显式空列表和单项移除保留；新手动加入的 Codex 是路径对象，不会被迁移。均不按窗口标题或网页域名匹配，也不默认将终端加入白名单。
 
 ## 修复前的原因与证据
 
@@ -47,6 +53,10 @@ macOS 使用 NSEvent 鼠标事件，Windows 在原有 COM 工作线程中间隔�
 
 限制：系统暴露的焦点和控件语义可能不完整，无法可靠判断时不自动弹出。鼠标动作、选区变化与程序自动修改之间没有所有应用通用的因果证明，不能保证覆盖一切自定义控件。渲染后代码边界丢失的问题没有在本次顺带解决。
 
-19 个 Rust 测试通过，覆盖配置迁移/空白名单、鼠标动作消费、编辑/忽略上下文、拖选中等待、焦点切换、旧动作、忙碌任务、内容过滤，以及手动来源跟踪和已有浮窗行为。最终 macOS 应用界面已验证两个默认勾选项，以及取消 Claude Desktop 后保存、再恢复并保存。TypeScript 与生产前端构建、Swift 编译、Windows 适配模块交叉编译均通过。
+此前固定双应用版本的 19 个 Rust 测试通过，覆盖配置迁移/空白名单、鼠标动作消费、编辑/忽略上下文、拖选中等待、焦点切换、旧动作、忙碌任务、内容过滤，以及手动来源跟踪和已有浮窗行为。该版 macOS 应用界面已验证两个默认勾选项，以及取消 Claude Desktop 后保存、再恢复并保存。TypeScript 与生产前端构建、Swift 编译、Windows 适配模块交叉编译均通过。
 
 真实应用仍需验收保存框、重命名、搜索框、聊天输入、只读正文、双击选词、拖选中停顿、切回旧选区，以及手动快捷键和浮窗跟随。规则单元测试与真实应用端到端结果分别记录在 `verification.md`，不将单元测试冒充目标应用实测。
+
+## 本机应用选择器修订
+
+新增默认项更正、旧配置迁移保留移除、手动加入 Codex 的序列化往返、非法本机路径与未知默认项测试，共 21 个 Rust 测试通过。TypeScript、生产前端、Swift 编译与 macOS 打包、签名校验、Windows 适配模块交叉编译通过。桌面选择器、保存/重启的实测状态见 `verification.md`；当前 Mac 锁屏时不能用静态/编译结果替代 UI 验证。

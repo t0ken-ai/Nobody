@@ -1,7 +1,42 @@
 //! Preferences contain no secrets. The API key lives in the OS credential store
 //! and is scoped to an endpoint, so switching providers cannot leak an old key.
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::{fs, path::Path};
+
+/// Presets follow a known native identity even before installation. User-picked
+/// apps bind to a canonical local path (and a bundle ID on macOS), so unrelated
+/// applications with the same display name cannot gain automatic capture.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum Application {
+    Preset(String),
+    Local {
+        name: String,
+        path: String,
+        platform: String,
+        #[serde(rename = "bundleId", default)]
+        bundle_id: String,
+    },
+}
+
+/// The previous release exposed only Codex/Claude checkboxes. Correct that old
+/// Codex default to ChatGPT, preserving deliberate removals (especially []).
+/// New custom entries never go through this product-key migration.
+fn read_applications<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Application>, D::Error> {
+    let mut apps = Vec::<Application>::deserialize(d)?;
+    for app in &mut apps {
+        if *app == Application::Preset("codex".into()) {
+            *app = Application::Preset("chatgpt".into());
+        }
+    }
+    let mut unique = Vec::new();
+    for app in apps {
+        if !unique.contains(&app) {
+            unique.push(app);
+        }
+    }
+    Ok(unique)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -9,9 +44,9 @@ pub struct Settings {
     pub engine: String,
     pub target_language: String,
     pub auto_selection: bool,
-    /// Stable product keys, resolved to native application identities by each
-    /// adapter. Older preference files inherit only these two defaults.
-    pub automatic_apps: Vec<String>,
+    /// Automatic selection only; explicit shortcuts remain user initiated.
+    #[serde(deserialize_with = "read_applications")]
+    pub automatic_apps: Vec<Application>,
     pub write_shortcut: String,
     pub read_shortcut: String,
     pub endpoint: String,
@@ -23,7 +58,10 @@ impl Default for Settings {
             engine: "system".into(),
             target_language: "zh-Hans".into(),
             auto_selection: true,
-            automatic_apps: vec!["codex".into(), "claude".into()],
+            automatic_apps: vec![
+                Application::Preset("chatgpt".into()),
+                Application::Preset("claude".into()),
+            ],
             write_shortcut: "CommandOrControl+Shift+E".into(),
             read_shortcut: "CommandOrControl+Shift+D".into(),
             endpoint: String::new(),
@@ -77,11 +115,42 @@ pub fn endpoint_url(raw: &str) -> Result<url::Url, String> {
 }
 
 pub fn validate(s: &Settings) -> Result<(), String> {
-    if s.automatic_apps
-        .iter()
-        .any(|app| !["codex", "claude"].contains(&app.as_str()))
-    {
-        return Err("自动划词白名单仅支持 Codex 和 Claude Desktop。".into());
+    // Structural validation is platform independent. Native validation at save
+    // time additionally verifies the file/bundle exists and matches its identity.
+    if s.automatic_apps.len() > 100 {
+        return Err("白名单最多支持 100 个应用。".into());
+    }
+    for app in &s.automatic_apps {
+        match app {
+            Application::Preset(key) if ["chatgpt", "claude"].contains(&key.as_str()) => {}
+            Application::Local {
+                name,
+                path,
+                platform,
+                bundle_id,
+            } => {
+                let valid_path = match platform.as_str() {
+                    "macOS" => {
+                        path.starts_with('/')
+                            && path.to_ascii_lowercase().ends_with(".app")
+                            && !bundle_id.trim().is_empty()
+                    }
+                    "Windows" => {
+                        let bytes = path.as_bytes();
+                        bytes.len() > 3
+                            && bytes[0].is_ascii_alphabetic()
+                            && bytes[1] == b':'
+                            && bytes[2] == b'\\'
+                            && path.to_ascii_lowercase().ends_with(".exe")
+                    }
+                    _ => false,
+                };
+                if name.trim().is_empty() || path.contains('\0') || !valid_path {
+                    return Err("请选择本机有效的应用文件。".into());
+                }
+            }
+            _ => return Err("未知的默认应用，请重新选择。".into()),
+        }
     }
     if !["system", "llm"].contains(&s.engine.as_str()) {
         return Err("未知的翻译引擎。".into());
@@ -149,14 +218,40 @@ pub fn set_key(endpoint: &str, key: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     #[test]
-    fn existing_settings_get_narrow_defaults_and_empty_allowlist_stays_empty() {
-        let old: Settings = serde_json::from_str(r#"{"autoSelection":true}"#).unwrap();
-        assert_eq!(old.automatic_apps, ["codex", "claude"]);
+    fn defaults_and_legacy_migration_preserve_user_removals() {
+        let missing: Settings = serde_json::from_str(r#"{"autoSelection":true}"#).unwrap();
+        let legacy: Settings =
+            serde_json::from_str(r#"{"automaticApps":["codex","claude"]}"#).unwrap();
+        assert_eq!(missing.automatic_apps, Settings::default().automatic_apps);
+        assert_eq!(legacy.automatic_apps, missing.automatic_apps);
         let empty: Settings = serde_json::from_str(r#"{"automaticApps":[]}"#).unwrap();
         assert!(empty.automatic_apps.is_empty());
-        let mut invalid = old;
-        invalid.automatic_apps.push("terminal".into());
-        assert!(validate(&invalid).is_err());
+        let removed: Settings = serde_json::from_str(r#"{"automaticApps":["claude"]}"#).unwrap();
+        assert_eq!(
+            removed.automatic_apps,
+            [Application::Preset("claude".into())]
+        );
+    }
+    #[test]
+    fn chosen_apps_roundtrip_without_becoming_presets() {
+        let raw = r#"{"automaticApps":[{"name":"Codex","path":"/Applications/Codex.app","platform":"macOS","bundleId":"com.openai.codex"}]}"#;
+        let s: Settings = serde_json::from_str(raw).unwrap();
+        validate(&s).unwrap();
+        let copy: Settings = serde_json::from_value(serde_json::to_value(&s).unwrap()).unwrap();
+        assert_eq!(copy.automatic_apps, s.automatic_apps);
+    }
+    #[test]
+    fn rejects_non_application_paths_and_unknown_presets() {
+        for raw in [
+            r#"["terminal"]"#,
+            r#"[{"name":"Web","path":"https://example.com/app.app","platform":"macOS","bundleId":"web"}]"#,
+            r#"[{"name":"File","path":"/Applications/test.txt","platform":"macOS","bundleId":"test"}]"#,
+            r#"[{"name":"Script","path":"C:\\Tools\\run.bat","platform":"Windows"}]"#,
+        ] {
+            let mut s = Settings::default();
+            s.automatic_apps = serde_json::from_str(raw).unwrap();
+            assert!(validate(&s).is_err());
+        }
     }
     #[test]
     fn rejects_credential_leaks_and_normalizes_compatible_endpoints() {

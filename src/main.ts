@@ -3,11 +3,21 @@ import { listen } from "@tauri-apps/api/event";
 import "./style.css";
 import { demoMarkup, mountDemos } from "./demos";
 
+/** Custom entries come only from the native app picker. Presets can remain
+ * configured before installation; their identity never depends on a label. */
+type LocalApplication = { name: string; path: string; platform: string; bundleId: string };
+type Application = "chatgpt" | "claude" | LocalApplication;
+const presetNames = { chatgpt: "ChatGPT Desktop", claude: "Claude Desktop" };
+const presetBundles = { chatgpt: "com.openai.chat", claude: "com.anthropic.claudefordesktop" };
+const appName = (app: Application) => typeof app === "string" ? presetNames[app] : app.name;
+let applicationDraft: Application[] = [];
+let pickingApplication = false;
+
 type Settings = {
   engine: "system" | "llm";
   targetLanguage: string;
   autoSelection: boolean;
-  automaticApps: string[];
+  automaticApps: Application[];
   writeShortcut: string;
   readShortcut: string;
   endpoint: string;
@@ -18,6 +28,7 @@ type Status = {
   systemTranslation: boolean;
   platform: string;
   settings: Settings;
+  defaultApps?: Record<string, LocalApplication | null>;
 };
 type Result = {
   source: string;
@@ -143,7 +154,7 @@ if (popup) {
         <section id="demos">
           <div class="heading-row"><div><div class="eyebrow"><span></span> THINK IN YOUR LANGUAGE</div><h1>想法，不必绕远路<span>。</span></h1><p class="subtitle">写下你想说的，读懂你想看的。</p></div><span class="demo-badge"><span></span>交互演示</span></div>
           <div class="demo-grid">${demoMarkup()}</div>
-          <div class="demo-footnote"><span>固定样例 · 自动划词默认仅限 Codex / Claude Desktop</span><button id="try-workbench" class="text-button">去翻译一段 ${icon("arrow")}</button></div>
+          <div class="demo-footnote"><span>固定样例 · 自动划词默认仅限 ChatGPT Desktop / Claude Desktop</span><button id="try-workbench" class="text-button">去翻译一段 ${icon("arrow")}</button></div>
         </section>
         <section id="workbench" hidden>
           <div class="heading-row"><div><div class="eyebrow">A SPACE FOR YOUR WORDS</div><h1>让想法，跨过语言。</h1><p class="subtitle">粘贴一段文字，在这里完成翻译。</p></div></div>
@@ -160,7 +171,7 @@ if (popup) {
             <div class="setting-card"><h2>翻译引擎</h2><div class="engine-choices"><label><input type="radio" name="engine" value="system" checked /><span><strong>系统翻译</strong><small>macOS · 本机处理 · 无需 API Key</small></span></label><label><input type="radio" name="engine" value="llm" /><span><strong>自定义 LLM</strong><small>macOS / Windows · 兼容 Chat Completions 接口</small></span></label></div>
             <p id="system-help" class="field-help">系统会在需要时提示下载语言包。</p>
             <div id="llm-fields" hidden><label class="field">API 地址<input id="endpoint" type="url" placeholder="https://your-provider.com/v1" autocomplete="off" /></label><div class="field-row"><label class="field">模型名称<input id="model" placeholder="服务商提供的模型 ID" autocomplete="off" /></label><label class="field">API Key<input id="api-key" type="password" placeholder="留空保留已保存的密钥" autocomplete="new-password" /></label></div><label class="checkbox-row"><input id="delete-key" type="checkbox" />删除当前服务已保存的密钥</label><p class="field-help">密钥保存在系统凭据库。文字只发送到你配置的服务；本机 LLM 可使用 localhost 地址。</p></div></div>
-            <div class="setting-card"><h2>阅读与快捷键</h2><div class="field-row"><label class="field">阅读目标语言<select id="reading-language">${languageOptions}</select></label><label class="field">划词自动翻译<span class="switch-row"><input id="auto-selection" type="checkbox" /><span>仅在白名单应用中触发</span></span></label></div><div class="allowlist-field"><span>自动划词白名单</span><div><label><input id="allow-codex" type="checkbox" />Codex</label><label><input id="allow-claude" type="checkbox" />Claude Desktop</label></div><p class="field-help">只在所选应用的阅读正文中自动翻译；输入框和文件对话框忽略。手动快捷键不受白名单限制。</p></div><div class="field-row"><label class="field">写入英文快捷键<input id="write-key" aria-label="写入英文快捷键" /></label><label class="field">阅读翻译快捷键<input id="read-key" aria-label="阅读翻译快捷键" /></label></div><p class="field-help">可直接按组合键录入。翻译只负责回填，不会替你按发送；输入变化时保留译文供复制。</p></div>
+            <div class="setting-card"><h2>阅读与快捷键</h2><div class="field-row"><label class="field">阅读目标语言<select id="reading-language">${languageOptions}</select></label><label class="field">划词自动翻译<span class="switch-row"><input id="auto-selection" type="checkbox" /><span>仅在白名单应用中触发</span></span></label></div><div class="allowlist-field"><div class="allowlist-heading"><span>自动划词 · 应用白名单</span><button id="add-application" class="button small" type="button">＋ 添加本机应用</button></div><ul id="application-list" aria-label="自动划词应用白名单"></ul><div class="allowlist-footer"><span>默认：ChatGPT Desktop、Claude Desktop</span><button id="reset-applications" class="text-button" type="button">恢复默认</button></div><p class="field-help">只在列表中应用的阅读正文里自动翻译；输入框、保存／打开文件对话框忽略。手动快捷键不受白名单限制。修改后请保存设置。</p></div><div class="field-row"><label class="field">写入英文快捷键<input id="write-key" aria-label="写入英文快捷键" /></label><label class="field">阅读翻译快捷键<input id="read-key" aria-label="阅读翻译快捷键" /></label></div><p class="field-help">可直接按组合键录入。翻译只负责回填，不会替你按发送；输入变化时保留译文供复制。</p></div>
             <div class="action-row"><span class="privacy-note">不保存翻译历史</span><button class="button primary" type="submit" id="save">保存设置 ${icon("check")}</button></div>
           </form>
         </section>
@@ -269,14 +280,43 @@ if (popup) {
       $<HTMLInputElement>(id).value = [...modifiers, key].join("+");
     };
   }
+  $("add-application").onclick = async () => {
+    if (pickingApplication) return;
+    pickingApplication = true;
+    $<HTMLButtonElement>("add-application").disabled = true;
+    $<HTMLButtonElement>("save").disabled = true;
+    try {
+      const { apps } = await call<{ apps: LocalApplication[] }>("pick_applications");
+      for (const app of apps) {
+        // Selecting a preset's installed bundle makes its path explicit. Repeat
+        // picks replace that row instead of adding duplicate capture identities.
+        const index = applicationDraft.findIndex(existing => sameApplication(existing, app));
+        if (index < 0) applicationDraft.push(app);
+        else applicationDraft[index] = app;
+      }
+      renderApplications();
+      if (apps.length) notice("已加入待保存的白名单，点击“保存设置”后生效。");
+    } catch (error) { notice(String(error), true); }
+    finally {
+      pickingApplication = false;
+      $<HTMLButtonElement>("add-application").disabled = false;
+      $<HTMLButtonElement>("save").disabled = false;
+    }
+  };
+  $("reset-applications").onclick = () => {
+    applicationDraft = ["chatgpt", "claude"];
+    renderApplications();
+    notice("已恢复默认列表，点击“保存设置”后生效。");
+  };
   $("settings-form").onsubmit = async (event) => {
     event.preventDefault();
+    if (pickingApplication) return;
     $<HTMLButtonElement>("save").disabled = true;
     const settings: Settings = {
       engine: selectedEngine(),
       targetLanguage: $<HTMLSelectElement>("reading-language").value,
       autoSelection: $<HTMLInputElement>("auto-selection").checked,
-      automaticApps: ["codex", "claude"].filter(app => $<HTMLInputElement>(`allow-${app}`).checked),
+      automaticApps: [...applicationDraft],
       writeShortcut: $<HTMLInputElement>("write-key").value,
       readShortcut: $<HTMLInputElement>("read-key").value,
       endpoint: $<HTMLInputElement>("endpoint").value.trim(),
@@ -296,6 +336,59 @@ if (popup) {
       $<HTMLButtonElement>("save").disabled = false;
     }
   };
+}
+
+/** Compare the identity actually used by the native adapter, never names. */
+function sameApplication(existing: Application, chosen: LocalApplication): boolean {
+  if (typeof existing === "string") {
+    return chosen.platform === "macOS" ? presetBundles[existing] === chosen.bundleId
+      : chosen.path.split(/[/\\]/).pop()?.toLowerCase() === `${existing}.exe`;
+  }
+  return existing.platform === chosen.platform && (chosen.platform === "Windows"
+    ? existing.path.toLowerCase() === chosen.path.toLowerCase()
+    : existing.path === chosen.path && existing.bundleId === chosen.bundleId);
+}
+
+/** File names are untrusted display text. Build nodes rather than interpolating
+ * names/paths into HTML. Removing the last row deliberately keeps an empty list. */
+function renderApplications() {
+  const list = $("application-list");
+  list.replaceChildren();
+  if (!applicationDraft.length) {
+    const empty = document.createElement("li");
+    empty.className = "application-empty";
+    empty.textContent = "还没有允许的应用，自动划词不会触发。";
+    list.append(empty);
+  }
+  applicationDraft.forEach((app, index) => {
+    const row = document.createElement("li");
+    row.className = "application-row";
+    const mark = document.createElement("span");
+    mark.className = "application-mark";
+    mark.setAttribute("aria-hidden", "true");
+    mark.textContent = appName(app).slice(0, 1).toUpperCase();
+    const detail = document.createElement("div");
+    const name = document.createElement("strong");
+    name.textContent = appName(app);
+    const path = document.createElement("small");
+    if (typeof app !== "string") path.textContent = app.path;
+    else {
+      const installed = status?.defaultApps?.[app];
+      path.textContent = installed ? installed.path
+        : status?.platform === "macOS" ? `未安装官方客户端 · ${presetBundles[app]}`
+        : `默认应用 · ${app === "chatgpt" ? "ChatGPT.exe" : "Claude.exe"}`;
+    }
+    path.title = path.textContent;
+    detail.append(name, path);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "text-button application-remove";
+    remove.textContent = "移除";
+    remove.setAttribute("aria-label", `移除 ${appName(app)}`);
+    remove.onclick = () => { applicationDraft.splice(index, 1); renderApplications(); };
+    row.append(mark, detail, remove);
+    list.append(row);
+  });
 }
 
 function selectedEngine(): Settings["engine"] {
@@ -342,7 +435,7 @@ async function refresh(initializeForm = true) {
       : "再一步，连接你的工作流";
     $("permission-description").textContent = status.accessibility
       ? (s.autoSelection && s.automaticApps.length
-        ? `${s.automaticApps.map(app => app === "codex" ? "Codex" : "Claude Desktop").join(" / ")} 中划选正文，松开鼠标即可。`
+        ? `${s.automaticApps.map(appName).join(" / ")} 中划选正文，松开鼠标即可。`
         : "自动划词已关闭，仍可使用手动翻译快捷键。")
       : "开启辅助功能后，才能读取选区并将英文回填到原输入框。";
     $("permission").hidden = status.accessibility;
@@ -364,9 +457,8 @@ async function refresh(initializeForm = true) {
       $("llm-fields").hidden = s.engine !== "llm";
       $<HTMLSelectElement>("reading-language").value = s.targetLanguage;
       $<HTMLInputElement>("auto-selection").checked = s.autoSelection;
-      for (const app of ["codex", "claude"]) {
-        $<HTMLInputElement>(`allow-${app}`).checked = s.automaticApps.includes(app);
-      }
+      applicationDraft = [...s.automaticApps];
+      renderApplications();
       $<HTMLInputElement>("write-key").value = s.writeShortcut;
       $<HTMLInputElement>("read-key").value = s.readShortcut;
       $<HTMLInputElement>("endpoint").value = s.endpoint;

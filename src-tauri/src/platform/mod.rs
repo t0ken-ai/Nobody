@@ -1,4 +1,4 @@
-//! Platform boundaries: selection, replacement and system translation only.
+//! Platform boundaries: selection, replacement, application picking and system translation.
 //! The shared translator never needs AppKit, UI Automation or clipboard details.
 #[cfg(target_os = "macos")]
 mod macos;

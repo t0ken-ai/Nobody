@@ -9,11 +9,12 @@ use std::{
 };
 use tokio::sync::oneshot;
 use windows::Win32::{
-    Foundation::CloseHandle,
+    Foundation::{CloseHandle, HWND},
+    Storage::FileSystem::GetDriveTypeW,
     System::{
         Com::{
             CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-            COINIT_MULTITHREADED,
+            COINIT_APARTMENTTHREADED, COINIT_MULTITHREADED,
         },
         Ole::{
             SafeArrayDestroy, SafeArrayGetDim, SafeArrayGetElement, SafeArrayGetElemsize,
@@ -25,7 +26,9 @@ use windows::Win32::{
         },
         Variant::{VariantClear, VariantToBoolean, VT_BOOL},
     },
-    UI::{Accessibility::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
+    UI::{
+        Accessibility::*, Controls::Dialogs::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*,
+    },
 };
 
 type Job = (Value, oneshot::Sender<Result<Value, String>>);
@@ -89,6 +92,22 @@ impl Platform {
     }
     pub async fn call(&self, value: Value) -> Result<Value, String> {
         let (tx, rx) = oneshot::channel();
+        if value["op"] == "pickApplications" {
+            // Human browsing has no timeout. A separate STA owns the modal
+            // dialog, leaving UIA polling and its COM objects on their worker.
+            std::thread::spawn(move || unsafe {
+                let result = match CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok() {
+                    Ok(()) => {
+                        let result = pick_application(&value);
+                        CoUninitialize();
+                        result
+                    }
+                    Err(e) => Err(format!("无法打开应用选择器：{e}")),
+                };
+                let _ = tx.send(result);
+            });
+            return rx.await.map_err(|_| "应用选择器已结束。")?;
+        }
         self.sender
             .send((value, tx))
             .map_err(|_| "Windows 系统服务已停止。")?;
@@ -109,9 +128,81 @@ unsafe fn foreground_pid() -> u32 {
     pid
 }
 
-/// Executable identity is resolved from the foreground PID, never its window
-/// title. Unknown/renamed hosts are excluded, including every terminal host.
-unsafe fn product_key(pid: u32) -> Option<&'static str> {
+/// Normalize Windows' extended local path prefix for persisted comparison.
+/// UNC/network applications are outside the local-app picker contract.
+fn normalized_path(path: &Path) -> Result<String, String> {
+    let resolved = std::fs::canonicalize(path).map_err(|_| "应用文件不存在，请重新选择。")?;
+    let raw = resolved.to_string_lossy();
+    let local = raw.strip_prefix(r"\\?\").unwrap_or(&raw);
+    let bytes = local.as_bytes();
+    if bytes.len() < 3 || !bytes[0].is_ascii_alphabetic() || &bytes[1..3] != b":\\" {
+        return Err("请选择本机磁盘上的应用。".into());
+    }
+    Ok(local.to_string())
+}
+
+/// Validate an existing local executable without running it. Paths selected by
+/// the dialog, not window titles or display names, bind custom allowlist rows.
+fn application_descriptor(path: &Path) -> Result<Value, String> {
+    let canonical = normalized_path(path)?;
+    let local = Path::new(&canonical);
+    if !local.is_file() || !canonical.to_ascii_lowercase().ends_with(".exe") {
+        return Err("请选择本机 .exe 应用。".into());
+    }
+    let root: Vec<u16> = canonical[..3].encode_utf16().chain(Some(0)).collect();
+    // DRIVE_REMOTE is 4. Removable/local drives are permitted; mapped network
+    // drives must not turn a local allowlist into a remote file selector.
+    if unsafe { GetDriveTypeW(windows::core::PCWSTR(root.as_ptr())) } == 4 {
+        return Err("请选择本机磁盘上的应用。".into());
+    }
+    Ok(
+        json!({"name":local.file_stem().unwrap_or_default().to_string_lossy(),
+        "path":canonical,"platform":"Windows","bundleId":""}),
+    )
+}
+
+/// Native picker starts in Program Files (Windows' app-install counterpart to
+/// /Applications). Cancellation is a successful no-op and leaves drafts intact.
+unsafe fn pick_application(request: &Value) -> Result<Value, String> {
+    let mut file = vec![0u16; 32768];
+    let filter: Vec<u16> = "应用程序 (*.exe)\0*.exe\0\0".encode_utf16().collect();
+    let title: Vec<u16> = "添加可自动翻译的应用\0".encode_utf16().collect();
+    let folder: Vec<u16> = std::env::var("ProgramFiles")
+        .unwrap_or_else(|_| r"C:\Program Files".into())
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    let mut options = OPENFILENAMEW {
+        lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
+        hwndOwner: HWND(request["owner"].as_u64().unwrap_or(0) as usize as *mut _),
+        lpstrFilter: windows::core::PCWSTR(filter.as_ptr()),
+        lpstrFile: windows::core::PWSTR(file.as_mut_ptr()),
+        nMaxFile: file.len() as u32,
+        lpstrInitialDir: windows::core::PCWSTR(folder.as_ptr()),
+        lpstrTitle: windows::core::PCWSTR(title.as_ptr()),
+        Flags: OFN_EXPLORER
+            | OFN_FILEMUSTEXIST
+            | OFN_PATHMUSTEXIST
+            | OFN_NOCHANGEDIR
+            | OFN_DONTADDTORECENT,
+        ..Default::default()
+    };
+    if !GetOpenFileNameW(&mut options).as_bool() {
+        let error = CommDlgExtendedError().0;
+        return if error == 0 {
+            Ok(json!({"apps":[]}))
+        } else {
+            Err(format!("无法选择应用（系统错误 {error}）。"))
+        };
+    }
+    let length = file.iter().position(|c| *c == 0).unwrap_or(file.len());
+    let path = String::from_utf16(&file[..length]).map_err(|_| "应用路径无效。")?;
+    Ok(json!({"apps":[application_descriptor(Path::new(&path))?]}))
+}
+
+/// Resolve the actual foreground executable, never the window's title. Custom
+/// apps require the full path; built-in presets retain executable-name identity.
+unsafe fn process_path(pid: u32) -> Option<String> {
     let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
     let mut path = vec![0u16; 32768];
     let mut length = path.len() as u32;
@@ -124,16 +215,26 @@ unsafe fn product_key(pid: u32) -> Option<&'static str> {
     let _ = CloseHandle(process);
     result.ok()?;
     let path = String::from_utf16_lossy(&path[..length as usize]);
-    match path.rsplit('\\').next()?.to_ascii_lowercase().as_str() {
-        "codex.exe" => Some("codex"),
-        "claude.exe" => Some("claude"),
-        _ => None,
-    }
+    normalized_path(Path::new(&path)).ok()
+}
+fn application_allowed(path: &str, apps: &[Value]) -> bool {
+    let filename = path.rsplit('\\').next().unwrap_or("");
+    apps.iter().any(|app| match app.as_str() {
+        Some("chatgpt") => filename.eq_ignore_ascii_case("ChatGPT.exe"),
+        Some("claude") => filename.eq_ignore_ascii_case("Claude.exe"),
+        Some(_) => false,
+        None => {
+            app["platform"] == "Windows"
+                && app["path"]
+                    .as_str()
+                    .is_some_and(|allowed| allowed.eq_ignore_ascii_case(path))
+        }
+    })
 }
 
 #[derive(Default)]
 struct SelectionMouse {
-    allowed: Vec<String>,
+    allowed: Vec<Value>,
     held: bool,
     start: Option<(u32, i32, i32, bool)>,
     dragged: bool,
@@ -157,7 +258,8 @@ impl SelectionMouse {
             return;
         }
         if held && !self.held {
-            let allowed = product_key(pid).is_some_and(|key| self.allowed.iter().any(|a| a == key));
+            let allowed =
+                process_path(pid).is_some_and(|path| application_allowed(&path, &self.allowed));
             let double = self.last_click.is_some_and(|(p, x, y, t)| {
                 p == pid
                     && t.elapsed() <= Duration::from_millis(GetDoubleClickTime() as u64)
@@ -351,12 +453,10 @@ unsafe fn capture(
 ) -> Result<Value, String> {
     let automatic = request["op"] == "selection";
     let front = foreground_pid();
-    let product = product_key(front);
-    let allowed = product.is_some_and(|key| {
-        request["allowedApps"]
-            .as_array()
-            .is_some_and(|apps| apps.iter().any(|a| a == key))
-    });
+    let executable = process_path(front).unwrap_or_default();
+    let allowed = request["allowedApps"]
+        .as_array()
+        .is_some_and(|apps| application_allowed(&executable, apps));
     if automatic && !allowed && request["tracking"]["pid"].as_u64() != Some(front as u64) {
         return Ok(json!({"ignored":true,"reason":"application","pid":front}));
     }
@@ -396,7 +496,7 @@ unsafe fn capture(
     } else {
         "manual"
     };
-    let mut result = json!({"app":match product {Some("codex")=>"Codex",Some("claude")=>"Claude Desktop",_=>"Windows 应用"},
+    let mut result = json!({"app":Path::new(&executable).file_stem().unwrap_or_default().to_string_lossy(),
         "pid":pid,"contextId":context,"autoEligible":allowed && kind == "reading"});
     mouse.annotate(&mut result, pid);
     let following = !context.is_empty()
@@ -561,14 +661,25 @@ unsafe fn dispatch(
     if request["op"] == "selection" {
         mouse.allowed = request["allowedApps"]
             .as_array()
-            .map(|apps| {
-                apps.iter()
-                    .filter_map(|a| a.as_str().map(str::to_string))
-                    .collect()
-            })
+            .cloned()
             .unwrap_or_default();
     }
     match request["op"].as_str().unwrap_or("") {
+        "validateApplications" => {
+            for app in request["apps"].as_array().ok_or("无效的应用列表。")? {
+                if matches!(app.as_str(), Some("chatgpt" | "claude")) {
+                    continue;
+                }
+                if app["platform"] != "Windows" {
+                    return Err("请选择这台 Windows 电脑上的应用。".into());
+                }
+                let actual = application_descriptor(Path::new(app["path"].as_str().unwrap_or("")))?;
+                if actual["path"] != app["path"] {
+                    return Err("应用位置已改变，请重新添加。".into());
+                }
+            }
+            Ok(json!({"ok":true}))
+        }
         "status" | "permission" => {
             Ok(json!({"accessibility":true,"systemTranslation":false,"platform":"Windows"}))
         }

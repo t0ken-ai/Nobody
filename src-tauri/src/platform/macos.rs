@@ -32,10 +32,16 @@ impl Platform {
         }
         // A slow model download may still finish after timeout. The callback owns
         // its sender until then, so dropping this receiver cannot cause a UAF.
-        let response = tokio::time::timeout(std::time::Duration::from_secs(120), rx)
-            .await
-            .map_err(|_| "操作超时；如首次使用系统翻译，请完成语言包下载后重试。".to_string())?
-            .map_err(|_| "原生操作已结束。".to_string())?;
+        let response = if value["op"] == "pickApplications" {
+            // A person browsing Applications has no deadline. Swift's panel
+            // completion replies exactly once on either selection or cancel.
+            rx.await
+        } else {
+            tokio::time::timeout(std::time::Duration::from_secs(120), rx)
+                .await
+                .map_err(|_| "操作超时；如首次使用系统翻译，请完成语言包下载后重试。".to_string())?
+        }
+        .map_err(|_| "原生操作已结束。".to_string())?;
         if let Some(error) = response.get("error").and_then(Value::as_str) {
             Err(error.into())
         } else {
