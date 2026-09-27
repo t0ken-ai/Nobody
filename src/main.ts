@@ -126,7 +126,7 @@ async function call<T>(
 ): Promise<T> {
   if (!isTauri())
     throw new Error(
-      "当前为界面预览。请运行 TranslateMe 桌面应用以使用翻译和系统取词。",
+      "当前为界面预览。请运行 Nobody 桌面应用以使用翻译和系统取词。",
     );
   return invoke<T>(command, args);
 }
@@ -147,7 +147,7 @@ if (popup) {
   $("app").innerHTML =
     `<header class="popup-header" title="拖动顶部，移动译文"><div class="mini-brand"><span class="nobody-symbol" aria-hidden="true"></span> <strong id="popup-language">译文</strong></div><span class="drag-grip" aria-hidden="true">⠿</span><button id="hide" class="icon-button" aria-label="关闭译文" title="关闭 · Esc">${icon("close")}</button></header>
     <div id="notice" class="notice" role="status" hidden></div><main class="popup-body"><div id="popup-content"><div id="popup-text" class="popup-text">选中文字，即可在附近阅读译文。</div></div></main>
-    <footer class="popup-footer"><span id="popup-origin">TranslateMe</span><span id="popup-message" class="sr-only">原文保持不变</span><button id="popup-copy" class="popup-copy" disabled title="复制译文">${icon("copy")}复制</button></footer>`;
+    <footer class="popup-footer"><span id="popup-origin">Nobody</span><span id="popup-message" class="sr-only">原文保持不变</span><button id="popup-copy" class="popup-copy" disabled title="复制译文">${icon("copy")}复制</button></footer>`;
   $("hide").onclick = () => {
     void call("dismiss_popover");
   };
@@ -168,7 +168,7 @@ if (popup) {
 } else {
   $("app").innerHTML = `
     <main class="workspace">
-      <header class="topbar"><div class="brand"><span class="brand-symbol"><img src="${nobodyIcon}" alt="Nobody" width="33" height="33" /></span><span>TranslateMe<span class="brand-divider">/</span><small>语言之间，思路不断</small></span></div><nav aria-label="主导航"><button id="nav-demos" class="nav-item active" aria-current="page">使用演示</button><button id="nav-workbench" class="nav-item">翻译工作台</button><button id="nav-transfer" class="nav-item">局域网互传</button><button id="nav-settings" class="nav-item" aria-label="偏好设置">${icon("settings")}</button></nav></header>
+      <header class="topbar"><div class="brand"><span class="brand-symbol"><img src="${nobodyIcon}" alt="Nobody" width="33" height="33" /></span><span>Nobody<span class="brand-divider">/</span><small>语言之间，思路不断</small></span></div><nav aria-label="主导航"><button id="nav-demos" class="nav-item active" aria-current="page">使用演示</button><button id="nav-workbench" class="nav-item">翻译工作台</button><button id="nav-transfer" class="nav-item">局域网互传</button><button id="nav-settings" class="nav-item" aria-label="偏好设置">${icon("settings")}</button></nav></header>
       <div class="page-content">
         <section id="demos">
           <div class="heading-row"><div><div class="eyebrow"><span></span> THINK IN YOUR LANGUAGE</div><h1>想法，不必绕远路<span>。</span></h1><p class="subtitle">写下你想说的，读懂你想看的。</p></div></div>
@@ -200,7 +200,7 @@ if (popup) {
             <div class="action-row"><span class="privacy-note">不保存翻译历史</span><button class="button primary" type="submit" id="save">保存设置 ${icon("check")}</button></div>
           </form>
         </section>
-        <div id="permission-banner" class="permission-banner"><span class="connection-dot" aria-hidden="true"></span><div><strong id="permission-title">正在检查系统连接…</strong><p id="permission-description">跨应用取词需要辅助功能权限。</p></div><button id="permission" class="button small">开启辅助功能</button><span class="app-version">TranslateMe 0.1</span></div>
+        <div id="permission-banner" class="permission-banner"><span class="connection-dot" aria-hidden="true"></span><div><strong id="permission-title">正在检查系统连接…</strong><p id="permission-description">跨应用取词需要辅助功能权限。</p></div><button id="permission" class="button small">开启辅助功能</button><span class="app-version">Nobody 0.1</span></div>
         <div id="notice" class="notice" role="status" hidden></div>
       </div>
     </main>`;
@@ -290,7 +290,7 @@ if (popup) {
   $("permission").onclick = async () => {
     try {
       await call("request_permission");
-      notice("在系统设置中启用 TranslateMe，然后回到这里。");
+      notice("在系统设置中启用 Nobody，然后回到这里。");
     } catch (error) {
       notice(String(error), true);
     }
@@ -647,7 +647,7 @@ if (isTauri()) {
       document.body.classList.add("popup-loading");
       if (event.payload.target) $("popup-language").textContent = label(event.payload.target);
       $("popup-text").textContent = "";
-      $("popup-origin").textContent = "TranslateMe";
+      $("popup-origin").textContent = "Nobody";
       $("popup-message").textContent = "正在翻译";
       $<HTMLButtonElement>("popup-copy").disabled = true;
       resizePopup();

@@ -1,8 +1,8 @@
 [package]
-name = "translateme"
+name = "nobody"
 version = "0.1.0"
 edition = "2021"
-description = "A selection translator for your coding workflow"
+description = "Translation and local-network text and file sharing for developers"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

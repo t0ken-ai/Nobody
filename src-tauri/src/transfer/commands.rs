@@ -35,14 +35,14 @@ pub fn install(app: &tauri::AppHandle) {
         }
         if kind == "received" {
             if let Some(tray) = handle.tray_by_id("main-tray") {
-                let _ = tray.set_tooltip(Some("TranslateMe · 收到新内容"));
+                let _ = tray.set_tooltip(Some("Nobody · 收到新内容"));
             }
             // OS notification policy can suppress this; inbox delivery never
             // depends on notification permissions or the notification result.
             let _ = handle
                 .notification()
                 .builder()
-                .title("TranslateMe · 收到新内容")
+                .title("Nobody · 收到新内容")
                 .body("打开局域网互传，查看收到的文字或文件。")
                 .show();
         }
@@ -54,6 +54,8 @@ pub fn install(app: &tauri::AppHandle) {
             .map_err(|e| e.to_string())?
             .join("transfer");
         let home = app.path().home_dir().map_err(|e| e.to_string())?;
+        // This is the pre-Nobody migration source, not a display name. Keep it
+        // unchanged so upgrades still recognize the old default receive folder.
         let old_default = app
             .path()
             .download_dir()
@@ -202,7 +204,7 @@ pub fn mark_transfer_seen(
 ) -> Result<(), String> {
     main_service(&window, &state)?;
     if let Some(tray) = app.tray_by_id("main-tray") {
-        tray.set_tooltip(Some("TranslateMe · 写英文，读母语"))
+        tray.set_tooltip(Some("Nobody · 写英文，读母语"))
             .map_err(|e| e.to_string())?;
     }
     Ok(())

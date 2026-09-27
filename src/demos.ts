@@ -38,7 +38,7 @@ export function demoMarkup(): string {
           <div class="scene-caption"><span class="success-check">${check}</span><span class="scene-feedback">从一个想法开始</span></div>
         ` : `
           <div class="mock-document"><div class="document-heading"><span class="context-orb">${claude}</span><span>Implementation notes</span></div><p>Keep the current data visible<br>while loading new results.</p><p class="selection-line"><span class="selection-text">Allow users to retry.</span><span class="selection-pointer">${pointer}</span></p><div class="document-lines"><i></i><i></i></div></div>
-          <div class="mini-translation"><div><span>译文 · 简体中文</span><span>⠿</span></div><p>允许用户重试。</p><footer><span>TranslateMe</span><span>⧉</span></footer></div>
+          <div class="mini-translation"><div><span>译文 · 简体中文</span><span>⠿</span></div><p>允许用户重试。</p><footer><span>Nobody</span><span>⧉</span></footer></div>
           <div class="scene-caption"><span class="success-check">${check}</span><span class="scene-feedback">遇到一句想读懂的话</span></div>
         `}
       </div>

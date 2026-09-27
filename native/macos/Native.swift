@@ -1,5 +1,7 @@
 // Native macOS adapter. All AppKit / AX access is serialized on the main queue.
 // Rust owns the request lifetime; callbacks copy the JSON before this stack ends.
+// Own-window title lookups below must match tauri.conf.json's Nobody titles.
+// Rebranding just the config would silently break styling, cleanup and popovers.
 import AppKit
 import ApplicationServices
 import Foundation
@@ -53,7 +55,7 @@ private func scheduleBackgroundCleanup() {
     backgroundCleanup?.cancel()
     let work = DispatchWorkItem {
         backgroundCleanup = nil
-        guard let main = NSApp.windows.first(where: { $0.title == "TranslateMe" }),
+        guard let main = NSApp.windows.first(where: { $0.title == "Nobody" }),
               !main.isVisible || main.isMiniaturized else { return }
         // The system allocator decides what can be unmapped safely. Do not
         // force page-out or touch active allocations to lower a memory counter.
@@ -311,7 +313,7 @@ private func automaticContext(_ element: AXUIElement) -> String {
 /// Only the foreground app's focused element is inspected. No screen capture,
 /// clipboard polling, password fields, or traversal of unrelated windows occurs.
 private func focused() throws -> (NSRunningApplication, AXUIElement) {
-    guard AXIsProcessTrusted() else { throw NativeError.message("请先在系统设置中为 TranslateMe 开启辅助功能权限。") }
+    guard AXIsProcessTrusted() else { throw NativeError.message("请先在系统设置中为 Nobody 开启辅助功能权限。") }
     guard let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != getpid() else {
         throw NativeError.message("请先回到要翻译的应用。")
     }
@@ -321,7 +323,7 @@ private func focused() throws -> (NSRunningApplication, AXUIElement) {
     // AX activation attribute is limited to the app the user is interacting with.
     AXUIElementSetAttributeValue(root, "AXManualAccessibility" as CFString, kCFBooleanTrue)
     guard let raw = attribute(root, kAXFocusedUIElementAttribute), CFGetTypeID(raw) == AXUIElementGetTypeID() else {
-        throw NativeError.message("这个应用没有提供可读取的文本焦点。可将文字粘贴到 TranslateMe 翻译。")
+        throw NativeError.message("这个应用没有提供可读取的文本焦点。可将文字粘贴到 Nobody 翻译。")
     }
     let element = unsafeBitCast(raw, to: AXUIElement.self)
     AXUIElementSetMessagingTimeout(element, 0.25)
@@ -409,7 +411,7 @@ private func selectionAnchor(_ element: AXUIElement) -> [String: Any]? {
 /// a dynamic color on appearance changes. Keep the native title/buttons and
 /// content geometry; no full-size overlay, polling or theme IPC is needed.
 private func configureMainWindowAppearance() {
-    guard let window = NSApp.windows.first(where: { $0.title == "TranslateMe" }) else { return }
+    guard let window = NSApp.windows.first(where: { $0.title == "Nobody" }) else { return }
     // Tauri's default Visible style still sets fullSizeContentView. Remove it
     // before making the bar transparent, or the WebView moves behind the
     // traffic lights and the logo overlaps them (notably on recent macOS).
@@ -420,7 +422,7 @@ private func configureMainWindowAppearance() {
     // Keep the existing window size/position and let its content resize inside.
     window.setFrame(frame, display: false)
     window.titlebarSeparatorStyle = .none
-    window.backgroundColor = NSColor(name: "TranslateMeWindowBackground") { appearance in
+    window.backgroundColor = NSColor(name: "NobodyWindowBackground") { appearance in
         // Match Aqua/Dark Aqua rather than reading a cached system preference,
         // so automatic theme changes and increased-contrast variants still work.
         let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
@@ -434,7 +436,7 @@ private func configureMainWindowAppearance() {
 /// insufficient in another app's full-screen Space or Stage Manager set;
 /// these public collection behaviors let the popover accompany its source.
 private func configurePopover() throws {
-    guard let window = NSApp.windows.first(where: { $0.title == "TranslateMe · 译文" }) else {
+    guard let window = NSApp.windows.first(where: { $0.title == "Nobody · 译文" }) else {
         throw NativeError.message("译文浮窗尚未创建。")
     }
     var behavior = window.collectionBehavior
@@ -670,7 +672,7 @@ private func translate(_ request: [String: Any], _ reply: @escaping Reply, _ con
         if let source {
             let status = await LanguageAvailability().status(from: source, to: target)
             if status == .unsupported {
-                finish(.failure(NSError(domain: "TranslateMe.Translation", code: 1,
+                finish(.failure(NSError(domain: "Nobody.Translation", code: 1,
                     userInfo: [NSLocalizedDescriptionKey: "系统不支持当前语言组合，请切换 LLM。"])))
                 return
             }
@@ -688,7 +690,7 @@ private func translate(_ request: [String: Any], _ reply: @escaping Reply, _ con
             #endif
         }
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 368, height: 178), styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.title = "TranslateMe · Apple 翻译"
+        panel.title = "Nobody · Apple 翻译"
         panel.level = .floating
         panel.isReleasedWhenClosed = false
         panel.contentView = NSHostingView(rootView: TranslationHost(source: source, target: target,

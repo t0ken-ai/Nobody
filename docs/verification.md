@@ -1,5 +1,18 @@
 # 验证记录
 
+## Nobody 更名与 Apple 芯片 Mac Release（2026-09-28）
+
+- 统一主窗口、译文窗口、演示、菜单、通知、权限提示、LLM 系统身份与 User-Agent、应用元信息及说明文档中的展示名称。产品名与包名为 Nobody，进程可执行文件为 `nobody`。原生窗口标题匹配同步修改，启动检查未出现浮窗初始化错误，深色标题栏仍与页头一致。
+- 保留 Bundle ID `app.translateme.desktop`、`~/.translateme/`、旧接收目录迁移源、mDNS 服务、TLS ALPN／证书名／配对 exporter，避免更名切断既有配置和局域网信任。下文 TranslateMe 均为对应历史版本的原名。
+- `node scripts/package-release.mjs` 完成 `release` 优化构建（opt-level 3、thin LTO、单 codegen unit、strip），应用本体约 16.73 MiB；未使用调试构建冒充 Release。
+- `npm run build` 通过；`cargo test --manifest-path src-tauri/Cargo.toml --locked`：53 通过、0 失败、3 个依赖真实网络／人工操作的测试保持忽略。
+- 运行最终 `src-tauri/target/release/bundle/macos/Nobody.app`，窗口／网页标题、主界面、应用菜单显示 Nobody。系统设置中当前权限条目显示 Nobody；更新同一应用已有的辅助功能记录并重启后，界面确认「跨应用翻译已就绪」。这次没有重新执行跨电脑收发或用户前台划词验收。
+- Info.plist 的 `CFBundleName`／`CFBundleDisplayName` 为 Nobody，版本 0.1.0，最低系统声明 13.0；可执行文件为 arm64 Mach-O。动态依赖全部来自系统，Translation 框架弱链接，不包含开发机工具链依赖。未在 macOS 13／14 或 Windows 实机验收。
+- `codesign --verify --deep --strict`、DMG 校验与 ZIP 完整性检查通过。实际只读挂载 DMG，根目录只有 `Nobody.app`、`Applications` 链接和安装说明；包内应用签名有效，可执行文件哈希与构建产物一致，无用户数据库或主密钥。验证完成后已卸载镜像。
+- 输出位于 `artifacts/releases/`：DMG 8,223,896 字节，ZIP 7,460,137 字节。仍为 ad-hoc 签名，无 Developer ID 或 Apple 公证；其他 Mac 首次打开可能被系统拦截，参见 [安装说明](release-macos.md)。
+- DMG SHA-256：`d49b99265fff11c1a0b0120f80eb60deb5e030d0a08ee6a8afdc406bed5a075c`。
+- ZIP SHA-256：`aa59587e06ff6c72cfc027a8edd1c721292b4365cc725a0837722c795accc199`。
+
 ## 原生标题栏跟随主题（2026-09-27）
 
 - 修复主界面 CSS 已切换深色、macOS 原生标题栏仍显示系统灰色的问题。原生适配层在现有窗口初始化时设置透明标题栏和动态背景色，使用与页头协调的浅色／深绿色；由 AppKit 响应外观变化，没有新增轮询或前端主题 IPC。

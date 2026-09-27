@@ -4846,7 +4846,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "translateme"
+name = "nobody"
 version = "0.1.0"
 dependencies = [
  "arboard",

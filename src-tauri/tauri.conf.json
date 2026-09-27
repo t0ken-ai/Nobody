@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "TranslateMe",
+  "productName": "Nobody",
   "version": "0.1.0",
   "identifier": "app.translateme.desktop",
   "build": {
@@ -11,14 +11,16 @@
   },
   "app": {
     "windows": [
-      { "label": "main", "title": "TranslateMe", "width": 1060, "height": 780, "minWidth": 800, "minHeight": 630, "backgroundColor": "#f7f8fa" },
-      { "label": "result", "title": "TranslateMe · 译文", "url": "index.html?view=result", "width": 380, "height": 144, "resizable": false, "decorations": false, "visible": false, "focus": false, "alwaysOnTop": true, "visibleOnAllWorkspaces": true, "acceptFirstMouse": true, "skipTaskbar": true, "shadow": true, "backgroundColor": "#00000000", "windowEffects": { "effects": ["popover", "acrylic"], "state": "active", "radius": 16 } }
+      { "label": "main", "title": "Nobody", "width": 1060, "height": 780, "minWidth": 800, "minHeight": 630, "backgroundColor": "#f7f8fa" },
+      { "label": "result", "title": "Nobody · 译文", "url": "index.html?view=result", "width": 380, "height": 144, "resizable": false, "decorations": false, "visible": false, "focus": false, "alwaysOnTop": true, "visibleOnAllWorkspaces": true, "acceptFirstMouse": true, "skipTaskbar": true, "shadow": true, "backgroundColor": "#00000000", "windowEffects": { "effects": ["popover", "acrylic"], "state": "active", "radius": 16 } }
     ],
     "security": { "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'" }
   },
   "bundle": {
     "active": true,
     "targets": "all",
+    "shortDescription": "Translation and local-network sharing for developers",
+    "longDescription": "Nobody helps developers write in English, read selected text in their preferred language, and share text and files directly between trusted computers on the same local network.",
     "icon": ["icons/icon.png", "icons/icon.icns", "icons/icon.ico"],
     "macOS": { "minimumSystemVersion": "13.0", "infoPlist": "Info.plist" }
   }

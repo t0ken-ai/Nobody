@@ -596,7 +596,7 @@ fn main() {
             let open = tauri::menu::MenuItem::with_id(
                 app,
                 "open",
-                "打开 TranslateMe",
+                "打开 Nobody",
                 true,
                 None::<&str>,
             )?;
@@ -613,7 +613,7 @@ fn main() {
             #[cfg(not(target_os = "macos"))]
             let tray = tray.icon(tauri::include_image!("icons/32x32.png"));
             tray
-                .tooltip("TranslateMe · 写英文，读母语")
+                .tooltip("Nobody · 写英文，读母语")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => {
@@ -712,7 +712,7 @@ fn main() {
             transfer::commands::pick_transfer_directory
         ])
         .build(tauri::generate_context!())
-        .expect("TranslateMe could not start")
+        .expect("Nobody could not start")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
                 transfer::commands::shutdown(app);

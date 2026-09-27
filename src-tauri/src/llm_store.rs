@@ -123,7 +123,7 @@ fn open_encrypted(path: &Path, key: &str) -> Result<Connection, String> {
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .map_err(|_| "无法读取数据库版本。")?;
     if version > 1 {
-        return Err("此 LLM 数据库来自较新版本，请升级 TranslateMe。".into());
+        return Err("此 LLM 数据库来自较新版本，请升级 Nobody。".into());
     }
     // DELETE journals leave a single portable DB after a committed save. SQLite
     // encrypts journal pages too; memory-only temp tables avoid plaintext spills.

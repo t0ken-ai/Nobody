@@ -1,10 +1,12 @@
-# TranslateMe
+# Nobody
 
-面向编码工作流的 macOS / Windows 桌面翻译器。Tauri 2 + Rust + TypeScript；macOS 使用小型 Swift 适配层。
+面向开发者的翻译与局域网互传工具：用母语输入、回填英文，划词阅读译文，并在自己的电脑之间发送文字和文件。Tauri 2 + Rust + TypeScript；macOS 使用小型 Swift 适配层。
+
+Apple 芯片 Mac 的 Release 安装包、系统要求与首次使用说明见 [macOS Release](docs/release-macos.md)。
 
 ## 使用
 
-- **使用演示**：首页用两段可暂停、重播的动画展示操作。左侧演示输入中文、组合键按下、英文回填；右侧演示鼠标拖选、松开、自动弹出译文。样例只用于说明交互，不会调用翻译服务或发送按键。
+- **使用演示**：首页用两段可暂停、重播的动画展示操作。左侧演示输入中文、组合键按下、英文回填；右侧按平台显示触控板／鼠标拖选、松开、自动弹出译文。样例只用于说明交互，不会调用翻译服务或发送按键。
 - **写入英文**：在其他应用的输入框中按 `⌘⇧E`（Windows：`Ctrl+Shift+E`）。优先翻译选中文字；无选区时尝试读取当前可编辑输入框。译文只回填，**不会按发送**。
 - **划词阅读**：开启“划词自动翻译”后，默认只在 **ChatGPT Desktop / Claude Desktop** 的只读正文中拖选或双击选词，松开鼠标、选区稳定后触发翻译，**无需快捷键**。`⌘⇧D` / `Ctrl+Shift+D` 是备用的手动触发方式。默认阅读语言是简体中文。
 - 默认项按应用身份匹配，Codex 和同名第三方 ChatGPT 包装器不属于 macOS 的 ChatGPT Desktop 默认项；可手动加入。macOS 显示默认客户端的本机路径或未安装状态。自选应用按规范化路径匹配，macOS 还要求 Bundle ID 一致；移动应用后需重新添加，不按网页域名或窗口标题放行。
@@ -13,17 +15,17 @@
 - **翻译工作台**：粘贴文字、选择目标语言、点击翻译。此功能无需辅助功能权限。
 - **设置**：修改阅读语言、快捷键、自动划词开关，或配置兼容 Chat Completions 的 LLM。白名单可添加本机应用、移除和恢复默认；macOS 选择器每次从 `/Applications` 打开，可选择多个 `.app`，Windows 从 Program Files 选择 `.exe`。白名单读取本机应用图标，未安装或读取失败时显示通用图标；图标只用于展示并在窗口内短暂缓存，不写入白名单身份。点击“保存设置”后生效；移除全部后不会自动翻译。旧版 Codex 默认项迁移为 ChatGPT Desktop，用户主动清空的列表保持为空。
 - 自动划词忽略输入框、搜索框、保存/重命名等对话框，以及纯数字、路径和已识别的代码。恢复旧选区、程序默认全选或纯键盘选词不会单凭文本选中触发。控件语义不明确时使用手动翻译；手动快捷键与工作台不受自动白名单限制。
-- **局域网互传**：自动发现同网段的 TranslateMe 设备，选择后发送文字和一个／多个文件。首次双方核对校验码并确认信任，之后自动接收；文件夹不支持。
+- **局域网互传**：自动发现同网段的 Nobody 设备，选择后发送文字和一个／多个文件。首次双方核对校验码并确认信任，之后自动接收；文件夹不支持。
 - 关闭窗口后应用继续驻留菜单栏 / 系统托盘，可继续接收已信任设备的内容；从菜单中退出。
 
 ### 两台 Mac 互传
 
-1. 两台 Apple 芯片 Mac 解压同一份 `artifacts/TranslateMe-macOS-arm64.zip`，运行其中的 TranslateMe；另一台不需要安装 Node.js / Rust。
+1. 两台 Apple 芯片 Mac 使用同一份 `artifacts/releases/Nobody-0.1.0-macOS-arm64.dmg`，把 Nobody 拖进「应用程序」后打开；也可使用同目录的 ZIP 包。另一台不需要安装 Node.js / Rust。
 2. 连接同一局域网，进入“局域网互传”。按系统提示允许本地网络及接收目录访问；这项功能本身不需要辅助功能权限。首次准备接收目录时若停在“正在准备互传”，检查 macOS 的文件夹访问弹窗。
 3. 点击对方设备，输入文字或添加文件，点击发送。核对两台电脑的六位校验码一致，在两边点击信任。拒绝或两分钟未确认，不传正文和文件内容。
 4. 后续自动接收，传输记录提供文字全文／复制、文件位置和取消操作。新接收文件的默认目录为 `~/.translateme/received`（Windows 的 `~` 为用户主目录）；在“本机与接收设置”可改名、改目录或关闭互传。在设备旁“解除信任”会撤销信任并取消该设备当前任务。
 
-macOS 可能要求允许 TranslateMe 从钥匙串读取它自己的局域网设备身份。确认弹窗对应当前 TranslateMe 后，可选择“始终允许”；只选本次允许可能在下次启动时再次询问。该授权与辅助功能分开，开发包重新签名后也可能再次需要验证。
+Nobody 不访问钥匙串。LLM 密钥与局域网设备身份保存在当前用户的本地目录，详见 [本地凭据存储](docs/local-storage.md)。
 
 互传通过 mDNS 发现和 TLS 1.3 直传，无云端中转。当前使用 IPv4 私有／链路本地网络；访客隔离、跨网段、VPN 和防火墙可能阻止发现或连接。应用需保持运行，未安装、未启动或被隔离的设备不会出现。
 
@@ -39,9 +41,9 @@ macOS 可能要求允许 TranslateMe 从钥匙串读取它自己的局域网设�
 
 本地 ad-hoc 开发包重建后，系统可能仍将授权绑定到旧版本的签名；列表里的开关保持开启，也不代表当前版本已获授权。此时仅关闭再开启开关或重启应用可能无效。
 
-先退出 TranslateMe，在系统设置 → 隐私与安全 → 辅助功能中移除旧 TranslateMe 条目，再添加当前实际运行的 `.app` 并开启权限，然后重新启动应用。macOS 27 的相应入口显示为 **Device Control and Data Access**。若系统要求 Touch ID / 登录密码，需要在系统对话框中完成验证。
+先退出 Nobody，在系统设置 → 隐私与安全 → 辅助功能中移除旧 TranslateMe／Nobody 条目，再添加当前实际运行的 `.app` 并开启权限，然后重新启动应用。macOS 27 的相应入口显示为 **Device Control and Data Access**。若系统要求 Touch ID / 登录密码，需要在系统对话框中完成验证。
 
-以 TranslateMe 工作台显示“跨应用翻译已就绪”为准。完成后使用同一份构建测试；再次重建开发包可能需要重新授权。正式版本应使用稳定的开发者签名。
+以 Nobody 工作台显示“跨应用翻译已就绪”为准。完成后使用同一份构建测试；再次重建开发包可能需要重新授权。正式版本应使用稳定的开发者签名。
 
 快捷键在设置和使用演示中统一显示为按键图标：macOS 使用 Command、Option、Control 等对应符号，Windows 使用 Ctrl、Alt 和 Windows 键图标；默认 CmdOrCtrl 在 Windows 上仍然是 Ctrl。点击快捷键控件后按新组合键录入，Esc 或移开焦点取消，点击“保存设置”后生效。阅读演示在 macOS 显示触控板三指轻触／拖移／抬起（系统需先开启三指拖移），在 Windows 显示鼠标拖选；这只是演示设备，不限制实际使用的鼠标或触控板。
 
@@ -104,11 +106,15 @@ npm run bundle
 node scripts/local-build.mjs
 # 此机器：运行开发模式
 node scripts/local-build.mjs dev
+# Apple 芯片 Mac：优化构建、签名检查、DMG / ZIP 和 SHA-256 清单
+node scripts/package-release.mjs
 ```
 
-其他机器使用已安装的现代 Xcode / Command Line Tools 即可。也可通过 `TRANSLATEME_SWIFT_DEVELOPER_DIR` 指定 Swift 工具链，保持 Rust 的主工具链不变。macOS 应用输出在 `src-tauri/target/debug/bundle/macos/TranslateMe.app`。
+其他机器使用已安装的现代 Xcode / Command Line Tools 即可。也可通过 `TRANSLATEME_SWIFT_DEVELOPER_DIR` 指定 Swift 工具链，保持 Rust 的主工具链不变。macOS 应用输出在 `src-tauri/target/debug/bundle/macos/Nobody.app`。
 
-本地调试包没有开发者分发签名和 Apple 公证；正式对外发布需要签名、公证、Windows 安装包和实机验收。
+Release 应用输出在 `src-tauri/target/release/bundle/macos/Nobody.app`，分发包位于 `artifacts/releases/`。当前 macOS 配置使用 ad-hoc 签名，Release 表示优化构建，不代表获得了 Developer ID 签名或 Apple 公证；另一台 Mac 首次打开可能被系统拦截。面向公众发布前仍需配置开发者签名与公证。
+
+品牌名称为 Nobody；为保留升级兼容性，Bundle ID `app.translateme.desktop`、`~/.translateme/` 数据目录、旧接收目录迁移源及局域网协议标识继续使用原值。不要只为清理旧名称而替换这些兼容标识。历史验证文档中的 TranslateMe 是当时版本的名称。
 
 ## 模块边界
 

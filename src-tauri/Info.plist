@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>NSHumanReadableCopyright</key><string>TranslateMe</string>
+<key>NSHumanReadableCopyright</key><string>Nobody</string>
 <key>NSHighResolutionCapable</key><true/>
 <!-- Discovery and direct transfer are isolated to user-enabled LAN sharing. -->
-<key>NSLocalNetworkUsageDescription</key><string>发现同一局域网内的 TranslateMe 电脑，并传输你选择的文字和文件。</string>
+<key>NSLocalNetworkUsageDescription</key><string>发现同一局域网内的 Nobody 电脑，并传输你选择的文字和文件。</string>
+<!-- Preserve the wire service name so Nobody discovers existing paired peers. -->
 <key>NSBonjourServices</key><array><string>_translateme._tcp</string></array>
 </dict></plist>
