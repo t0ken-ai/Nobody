@@ -43,6 +43,100 @@ private struct Snapshot {
 }
 private var snapshots: [String: Snapshot] = [:]
 
+/// Match the installed application identity, never a document/window title.
+/// Claude Desktop includes its Code view; terminal hosts and URL handlers are
+/// deliberately not aliases for Claude Desktop or Codex.
+private func productKey(_ app: NSRunningApplication) -> String? {
+    switch app.bundleIdentifier {
+    case "com.openai.codex": return "codex"
+    case "com.anthropic.claudefordesktop": return "claude"
+    default: return nil
+    }
+}
+
+/// Only mouse gesture metadata is retained, in memory. No keyboard events or
+/// text are observed here. A fresh drag/double-click release is what separates
+/// intentional reading from restored ranges and programmatic select-all.
+private final class SelectionMouse {
+    var monitor: Any?
+    var allowed = Set<String>()
+    var down: (pid: pid_t, point: NSPoint, double: Bool)?
+    var dragged = false
+    var sequence: UInt64 = 0
+    var released: (pid: pid_t, time: TimeInterval)?
+
+    func configure(_ products: [String]) {
+        allowed = Set(products)
+        guard monitor == nil, !allowed.isEmpty else { return }
+        monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
+            guard let self else { return }
+            guard let app = NSWorkspace.shared.frontmostApplication,
+                  let key = productKey(app), self.allowed.contains(key) else {
+                self.down = nil
+                return
+            }
+            let point = NSEvent.mouseLocation
+            switch event.type {
+            case .leftMouseDown:
+                self.down = (app.processIdentifier, point, event.clickCount >= 2)
+                self.dragged = false
+            case .leftMouseDragged:
+                if let start = self.down {
+                    // Four logical pixels reject hand jitter on an ordinary
+                    // focus click without requiring a long text selection.
+                    self.dragged = self.dragged || hypot(point.x - start.point.x, point.y - start.point.y) >= 4
+                }
+            case .leftMouseUp:
+                if let start = self.down, start.pid == app.processIdentifier,
+                   self.dragged || start.double {
+                    self.sequence &+= 1
+                    self.released = (app.processIdentifier, ProcessInfo.processInfo.systemUptime)
+                }
+                self.down = nil
+            default: break
+            }
+        }
+    }
+
+    func metadata(_ pid: pid_t) -> [String: Any] {
+        guard let released, released.pid == pid else { return [:] }
+        return ["gestureId": "\(pid):\(sequence)",
+                "gestureAgeMs": max(0, Int((ProcessInfo.processInfo.systemUptime - released.time) * 1000))]
+    }
+}
+private let selectionMouse = SelectionMouse()
+
+private func elementAttribute(_ element: AXUIElement, _ name: String) -> AXUIElement? {
+    guard let raw = attribute(element, name), CFGetTypeID(raw) == AXUIElementGetTypeID() else { return nil }
+    return unsafeBitCast(raw, to: AXUIElement.self)
+}
+
+/// Inspect only the focused element's ancestor chain. Modal file panels and
+/// editable ancestors are excluded before selected text is read. Being able to
+/// set a selection range is NOT evidence that the text itself is writable.
+private func automaticContext(_ element: AXUIElement) -> String {
+    var current: AXUIElement? = element
+    var readable = false
+    var visited = Set<CFHashCode>()
+    for _ in 0..<24 {
+        guard let node = current, visited.insert(CFHash(node)).inserted else { break }
+        let role = textAttribute(node, kAXRoleAttribute) ?? ""
+        let subrole = textAttribute(node, kAXSubroleAttribute) ?? ""
+        if role == kAXSheetRole || subrole == kAXDialogSubrole || subrole == kAXSystemDialogSubrole
+            || (attribute(node, kAXModalAttribute) as? Bool) == true { return "dialog" }
+        if role == kAXTextFieldRole || role == kAXComboBoxRole
+            || elementAttribute(node, "AXEditableAncestor") != nil
+            || ([kAXTextAreaRole, kAXStaticTextRole].contains(role)
+                && (isSettable(node, kAXValueAttribute) || isSettable(node, kAXSelectedTextAttribute))) {
+            return "editing"
+        }
+        if [kAXTextAreaRole, kAXStaticTextRole, "AXWebArea"].contains(role) { readable = true }
+        if role == kAXWindowRole { return readable ? "reading" : "unknown" }
+        current = elementAttribute(node, kAXParentAttribute)
+    }
+    return readable ? "reading" : "unknown"
+}
+
 /// Only the foreground app's focused element is inspected. No screen capture,
 /// clipboard polling, password fields, or traversal of unrelated windows occurs.
 private func focused() throws -> (NSRunningApplication, AXUIElement) {
@@ -160,7 +254,33 @@ private func configurePopover() throws {
 /// A selection peek never creates a writable ticket. Explicit write shortcuts
 /// capture identity, original value and UTF-16 range for compare-before-replace.
 private func capture(_ request: [String: Any]) throws -> [String: Any] {
+    let automatic = request["op"] as? String == "selection"
+    let allowed = request["allowedApps"] as? [String] ?? []
+    guard let foreground = NSWorkspace.shared.frontmostApplication else { return ["ignored": true] }
+    let appAllowed = productKey(foreground).map { allowed.contains($0) } ?? false
+    let tracking = request["tracking"] as? [String: Any] ?? [:]
+    // Following an explicitly requested result is allowed only for its exact
+    // source PID and control. New captures in other applications stop here.
+    if automatic && !appAllowed && tracking["pid"] as? Int32 != foreground.processIdentifier {
+        return ["ignored": true, "reason": "application", "pid": foreground.processIdentifier]
+    }
     let (app, element) = try focused()
+    guard app.processIdentifier == foreground.processIdentifier else { return ["ignored": true] }
+    let window = elementAttribute(element, kAXWindowAttribute)
+    let contextId = "\(app.processIdentifier):\(window.map { CFHash($0) } ?? 0):\(CFHash(element))"
+    let context = automatic ? automaticContext(element) : "manual"
+    var result: [String: Any] = ["app": app.localizedName ?? "App", "pid": app.processIdentifier,
+        "contextId": contextId, "autoEligible": appAllowed && context == "reading",
+        "mouseDown": NSEvent.pressedMouseButtons & 1 != 0]
+    if automatic {
+        result.merge(selectionMouse.metadata(app.processIdentifier)) { _, next in next }
+        let following = tracking["pid"] as? Int32 == app.processIdentifier && tracking["contextId"] as? String == contextId
+        if (!appAllowed || context != "reading") && !following {
+            result["ignored"] = true
+            result["reason"] = context
+            return result
+        }
+    }
     let selected = textAttribute(element, kAXSelectedTextAttribute) ?? ""
     let value = textAttribute(element, kAXValueAttribute)
     let role = textAttribute(element, kAXRoleAttribute) ?? ""
@@ -168,9 +288,10 @@ private func capture(_ request: [String: Any]) throws -> [String: Any] {
         && (isSettable(element, kAXValueAttribute) || isSettable(element, kAXSelectedTextAttribute) || isSettable(element, kAXSelectedTextRangeAttribute))
     let whole = selected.isEmpty && (request["whole"] as? Bool == true) && editable
     let text = whole ? (value ?? "") : selected
+    if automatic && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return result }
     guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw NativeError.message("没有选中文字；写入翻译需要将光标放在可编辑的输入框。") }
     guard text.utf16.count <= 16000 else { throw NativeError.message("本次文字超过 16,000 字符，请分段翻译。") }
-    var result: [String: Any] = ["text": text, "app": app.localizedName ?? "App", "pid": app.processIdentifier, "editable": editable, "whole": whole]
+    result.merge(["text": text, "editable": editable, "whole": whole]) { _, next in next }
     if let range = rangeAttribute(element) {
         result["selectionId"] = "\(CFHash(element)):\(range.location):\(range.length)"
     }
@@ -376,6 +497,9 @@ public func nativeRequest(_ json: UnsafePointer<CChar>, _ reply: @escaping @conv
     DispatchQueue.main.async {
         do {
             guard let request = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw NativeError.message("无效的原生请求。") }
+            if request["op"] as? String == "selection" {
+                selectionMouse.configure(request["allowedApps"] as? [String] ?? [])
+            }
             switch request["op"] as? String {
             case "configurePopover":
                 try configurePopover()

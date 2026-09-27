@@ -9,6 +9,7 @@ use std::{
 };
 use tokio::sync::oneshot;
 use windows::Win32::{
+    Foundation::CloseHandle,
     System::{
         Com::{
             CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
@@ -17,6 +18,10 @@ use windows::Win32::{
         Ole::{
             SafeArrayDestroy, SafeArrayGetDim, SafeArrayGetElement, SafeArrayGetElemsize,
             SafeArrayGetLBound, SafeArrayGetUBound,
+        },
+        Threading::{
+            OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+            PROCESS_QUERY_LIMITED_INFORMATION,
         },
         Variant::{VariantClear, VariantToBoolean, VT_BOOL},
     },
@@ -58,8 +63,20 @@ impl Platform {
                 };
             let _ = ready_tx.send(Ok(()));
             let mut snapshots = HashMap::new();
-            for (request, reply) in receiver {
-                let _ = reply.send(dispatch(&automation, &mut snapshots, request));
+            let mut mouse = SelectionMouse::default();
+            loop {
+                // Sample only mouse button/position metadata between COM jobs.
+                // Very short gestures missed during a slow provider call fail
+                // closed; keyboard contents and window text are never polled.
+                mouse.poll();
+                match receiver.recv_timeout(Duration::from_millis(16)) {
+                    Ok((request, reply)) => {
+                        let _ =
+                            reply.send(dispatch(&automation, &mut snapshots, &mut mouse, request));
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                }
             }
             drop(snapshots);
             drop(automation);
@@ -90,6 +107,175 @@ unsafe fn foreground_pid() -> u32 {
     let mut pid = 0;
     GetWindowThreadProcessId(GetForegroundWindow(), Some(&mut pid));
     pid
+}
+
+/// Executable identity is resolved from the foreground PID, never its window
+/// title. Unknown/renamed hosts are excluded, including every terminal host.
+unsafe fn product_key(pid: u32) -> Option<&'static str> {
+    let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+    let mut path = vec![0u16; 32768];
+    let mut length = path.len() as u32;
+    let result = QueryFullProcessImageNameW(
+        process,
+        PROCESS_NAME_WIN32,
+        windows::core::PWSTR(path.as_mut_ptr()),
+        &mut length,
+    );
+    let _ = CloseHandle(process);
+    result.ok()?;
+    let path = String::from_utf16_lossy(&path[..length as usize]);
+    match path.rsplit('\\').next()?.to_ascii_lowercase().as_str() {
+        "codex.exe" => Some("codex"),
+        "claude.exe" => Some("claude"),
+        _ => None,
+    }
+}
+
+#[derive(Default)]
+struct SelectionMouse {
+    allowed: Vec<String>,
+    held: bool,
+    start: Option<(u32, i32, i32, bool)>,
+    dragged: bool,
+    last_click: Option<(u32, i32, i32, Instant)>,
+    released: Option<(u32, Instant)>,
+    sequence: u64,
+}
+impl SelectionMouse {
+    /// Small jitter is not selection intent; a double click uses the system's
+    /// timing/distance. A release must remain in the same allowlisted process.
+    unsafe fn poll(&mut self) {
+        let held = GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0;
+        if !held && !self.held {
+            return;
+        }
+        let pid = foreground_pid();
+        let mut point = windows::Win32::Foundation::POINT::default();
+        if GetCursorPos(&mut point).is_err() {
+            self.start = None;
+            self.held = held;
+            return;
+        }
+        if held && !self.held {
+            let allowed = product_key(pid).is_some_and(|key| self.allowed.iter().any(|a| a == key));
+            let double = self.last_click.is_some_and(|(p, x, y, t)| {
+                p == pid
+                    && t.elapsed() <= Duration::from_millis(GetDoubleClickTime() as u64)
+                    && (x - point.x).abs() <= GetSystemMetrics(SM_CXDOUBLECLK)
+                    && (y - point.y).abs() <= GetSystemMetrics(SM_CYDOUBLECLK)
+            });
+            self.start = allowed.then_some((pid, point.x, point.y, double));
+            self.dragged = false;
+        }
+        if let Some((start_pid, x, y, double)) = self.start {
+            self.dragged |= (x - point.x).abs() >= 4 || (y - point.y).abs() >= 4;
+            if !held {
+                if start_pid == pid && (self.dragged || double) {
+                    self.sequence += 1;
+                    self.released = Some((pid, Instant::now()));
+                }
+                self.last_click = (!self.dragged && start_pid == pid).then_some((
+                    pid,
+                    point.x,
+                    point.y,
+                    Instant::now(),
+                ));
+                self.start = None;
+            }
+        }
+        self.held = held;
+    }
+    fn annotate(&self, capture: &mut Value, pid: u32) {
+        capture["mouseDown"] = json!(self.held);
+        if let Some((source, time)) = self.released.filter(|(source, _)| *source == pid) {
+            capture["gestureId"] = json!(format!("{source}:{}", self.sequence));
+            capture["gestureAgeMs"] = json!(time.elapsed().as_millis() as u64);
+        }
+    }
+}
+
+/// Runtime IDs distinguish two controls holding identical text. Own and free
+/// the SAFEARRAY immediately; no UIA object or pointer crosses the COM thread.
+unsafe fn context_id(element: &IUIAutomationElement, pid: u32) -> Option<String> {
+    let array = element.GetRuntimeId().ok()?;
+    if array.is_null() {
+        return None;
+    }
+    let result = (|| {
+        if SafeArrayGetDim(array) != 1 || SafeArrayGetElemsize(array) != 4 {
+            return None;
+        }
+        let first = SafeArrayGetLBound(array, 1).ok()?;
+        let last = SafeArrayGetUBound(array, 1).ok()?;
+        if !(1..=128).contains(&(i64::from(last) - i64::from(first) + 1)) {
+            return None;
+        }
+        let mut id = pid.to_string();
+        for index in first..=last {
+            let mut value = 0i32;
+            SafeArrayGetElement(array, &index, &mut value as *mut i32 as _).ok()?;
+            id.push_str(&format!(":{value}"));
+        }
+        Some(id)
+    })();
+    let _ = SafeArrayDestroy(array);
+    result
+}
+
+/// Only inspect ancestors of the focused control, not siblings or other
+/// windows. Exclude file/modal dialogs and editable ancestors before text reads.
+unsafe fn automatic_context(
+    automation: &IUIAutomation,
+    element: &IUIAutomationElement,
+    editable: bool,
+    text_readonly: Option<bool>,
+) -> &'static str {
+    if editable {
+        return "editing";
+    }
+    let Ok(walker) = automation.RawViewWalker() else {
+        return "unknown";
+    };
+    let mut node = element.clone();
+    let mut readable = text_readonly == Some(true);
+    for _ in 0..24 {
+        let Ok(kind) = node.CurrentControlType() else {
+            return "unknown";
+        };
+        let modal = node
+            .GetCurrentPatternAs::<IUIAutomationWindowPattern>(UIA_WindowPatternId)
+            .ok()
+            .and_then(|p| p.CurrentIsModal().ok())
+            .is_some_and(|b| b.as_bool());
+        let dialog = node
+            .GetCurrentPropertyValue(UIA_IsDialogPropertyId)
+            .ok()
+            .is_some_and(|mut value| {
+                let result = value.Anonymous.Anonymous.vt == VT_BOOL
+                    && VariantToBoolean(&value).is_ok_and(|b| b.as_bool());
+                let _ = VariantClear(&mut value);
+                result
+            });
+        if modal || dialog {
+            return "dialog";
+        }
+        if kind == UIA_EditControlTypeId || kind == UIA_ComboBoxControlTypeId {
+            return "editing";
+        }
+        readable |= kind == UIA_DocumentControlTypeId || kind == UIA_TextControlTypeId;
+        if kind == UIA_WindowControlTypeId {
+            return if readable { "reading" } else { "unknown" };
+        }
+        let Ok(parent) = walker.GetParentElement(&node) else {
+            break;
+        };
+        node = parent;
+    }
+    if readable {
+        "reading"
+    } else {
+        "unknown"
+    }
 }
 unsafe fn text_pattern(element: &IUIAutomationElement) -> Option<IUIAutomationTextPattern> {
     element.GetCurrentPatternAs(UIA_TextPatternId).ok()
@@ -160,11 +346,23 @@ unsafe fn selection_anchor(range: Option<&IUIAutomationTextRange>) -> Option<Val
 unsafe fn capture(
     automation: &IUIAutomation,
     snapshots: &mut HashMap<String, Snapshot>,
+    mouse: &SelectionMouse,
     request: &Value,
 ) -> Result<Value, String> {
+    let automatic = request["op"] == "selection";
+    let front = foreground_pid();
+    let product = product_key(front);
+    let allowed = product.is_some_and(|key| {
+        request["allowedApps"]
+            .as_array()
+            .is_some_and(|apps| apps.iter().any(|a| a == key))
+    });
+    if automatic && !allowed && request["tracking"]["pid"].as_u64() != Some(front as u64) {
+        return Ok(json!({"ignored":true,"reason":"application","pid":front}));
+    }
     let element = automation.GetFocusedElement().map_err(failure)?;
     let pid = element.CurrentProcessId().map_err(failure)? as u32;
-    if pid == std::process::id() || foreground_pid() != pid {
+    if pid == std::process::id() || pid != front || foreground_pid() != pid {
         return Err("请回到要翻译的应用。".into());
     }
     if element.CurrentIsPassword().map_err(failure)?.as_bool() {
@@ -175,52 +373,78 @@ unsafe fn capture(
     let pattern = text_pattern(&element);
     // Browser contenteditable controls often expose TextPattern without
     // ValuePattern; accept them only when UIA explicitly marks text writable.
-    let text_writable = pattern
+    let text_readonly = pattern
         .as_ref()
         .and_then(|p| p.DocumentRange().ok())
         .and_then(|r| r.GetAttributeValue(UIA_IsReadOnlyAttributeId).ok())
         .map(|mut raw| {
-            let result = raw.Anonymous.Anonymous.vt == VT_BOOL
-                && VariantToBoolean(&raw).is_ok_and(|v| !v.as_bool());
+            let result = (raw.Anonymous.Anonymous.vt == VT_BOOL)
+                .then(|| VariantToBoolean(&raw).ok().map(|v| v.as_bool()))
+                .flatten();
             let _ = VariantClear(&mut raw);
             result
         })
-        .unwrap_or(false);
+        .flatten();
     let editable = value
         .as_ref()
         .and_then(|v| v.CurrentIsReadOnly().ok())
         .is_some_and(|v| !v.as_bool())
-        || text_writable;
+        || text_readonly == Some(false);
+    let context = context_id(&element, pid).unwrap_or_default();
+    let kind = if automatic {
+        automatic_context(automation, &element, editable, text_readonly)
+    } else {
+        "manual"
+    };
+    let mut result = json!({"app":match product {Some("codex")=>"Codex",Some("claude")=>"Claude Desktop",_=>"Windows 应用"},
+        "pid":pid,"contextId":context,"autoEligible":allowed && kind == "reading"});
+    mouse.annotate(&mut result, pid);
+    let following = !context.is_empty()
+        && request["tracking"]["pid"].as_u64() == Some(pid as u64)
+        && request["tracking"]["contextId"] == context;
+    if automatic && (!allowed || kind != "reading") && !following {
+        result["ignored"] = json!(true);
+        result["reason"] = json!(kind);
+        return Ok(result);
+    }
     let range = pattern.as_ref().and_then(|p| selection(p));
     let selected = range
         .as_ref()
         .and_then(|r| r.GetText(16001).ok())
         .map(|s| s.to_string())
         .unwrap_or_default();
-    let document = value
-        .as_ref()
-        .and_then(|v| v.CurrentValue().ok())
-        .map(|s| s.to_string())
-        .or_else(|| {
-            pattern
-                .as_ref()?
-                .DocumentRange()
-                .ok()?
-                .GetText(16001)
-                .ok()
-                .map(|s| s.to_string())
-        })
-        .unwrap_or_default();
+    let document = if request["whole"] == true || request["ticket"] == true {
+        value
+            .as_ref()
+            .and_then(|v| v.CurrentValue().ok())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                pattern
+                    .as_ref()?
+                    .DocumentRange()
+                    .ok()?
+                    .GetText(16001)
+                    .ok()
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
     let whole = selected.is_empty() && request["whole"] == true && editable;
     let text = if whole { &document } else { &selected };
     if text.trim().is_empty() {
+        if automatic {
+            return Ok(result);
+        }
         return Err("没有选中文字，或当前控件不支持安全读取。".into());
     }
     if text.encode_utf16().count() > 16000 {
         return Err("本次文字超过 16,000 字符，请分段翻译。".into());
     }
-    let mut result =
-        json!({"text":text,"app":"Windows 应用","pid":pid,"editable":editable,"whole":whole});
+    result["text"] = json!(text);
+    result["editable"] = json!(editable);
+    result["whole"] = json!(whole);
     if request["geometry"] == true {
         result["anchor"] = selection_anchor(range.as_ref()).unwrap_or(Value::Null);
     }
@@ -331,14 +555,25 @@ unsafe fn replace(
 unsafe fn dispatch(
     automation: &IUIAutomation,
     snapshots: &mut HashMap<String, Snapshot>,
+    mouse: &mut SelectionMouse,
     request: Value,
 ) -> Result<Value, String> {
+    if request["op"] == "selection" {
+        mouse.allowed = request["allowedApps"]
+            .as_array()
+            .map(|apps| {
+                apps.iter()
+                    .filter_map(|a| a.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+    }
     match request["op"].as_str().unwrap_or("") {
         "status" | "permission" => {
             Ok(json!({"accessibility":true,"systemTranslation":false,"platform":"Windows"}))
         }
         "selection" if foreground_pid() == std::process::id() => Ok(json!({"self":true})),
-        "selection" | "capture" => capture(automation, snapshots, &request),
+        "selection" | "capture" => capture(automation, snapshots, mouse, &request),
         "replace" => replace(automation, snapshots, &request),
         "copy" => {
             arboard::Clipboard::new()

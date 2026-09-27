@@ -38,8 +38,8 @@ pub struct Anchor {
 /// equal text at different positions where the platform exposes that identity.
 pub fn identity(capture: &Value, target: &str) -> String {
     format!(
-        "{}:{target}:{}:{}",
-        capture["pid"], capture["selectionId"], capture["text"]
+        "{}:{target}:{}:{}:{}",
+        capture["pid"], capture["contextId"], capture["selectionId"], capture["text"]
     )
 }
 
@@ -178,6 +178,7 @@ fn place(anchor: &Anchor, requested_height: f64) -> Placement {
 
 struct Session {
     key: String,
+    source: Value,
     anchor: Option<Anchor>,
     pinned: bool,
     dismissed: bool,
@@ -201,10 +202,11 @@ pub enum Update {
 impl Popover {
     /// A new request resets manual placement. The serial prevents a slow old
     /// translation from reappearing after selection changes or dismissal.
-    pub fn begin(&mut self, key: String, anchor: Option<Anchor>) -> u64 {
+    pub fn begin(&mut self, key: String, anchor: Option<Anchor>, source: Option<&Value>) -> u64 {
         self.serial += 1;
         self.active = Some(Session {
             key,
+            source: source.map(|capture| serde_json::json!({"pid":capture["pid"], "contextId":capture["contextId"]})).unwrap_or(Value::Null),
             anchor,
             pinned: false,
             dismissed: false,
@@ -219,6 +221,14 @@ impl Popover {
     }
     pub fn active(&self) -> bool {
         self.active.is_some()
+    }
+    /// Manual results may originate outside the automatic allowlist. Follow
+    /// only that exact control, without authorizing new automatic requests.
+    pub fn tracking(&self) -> Value {
+        self.active
+            .as_ref()
+            .map(|session| session.source.clone())
+            .unwrap_or(Value::Null)
     }
     /// Whole-input writes need not have a selected range. Their existing native
     /// replacement ticket validates changes; a read-only poll must not cancel
@@ -350,6 +360,21 @@ pub fn apply(app: &AppHandle, update: Update) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn tracking_is_limited_to_source_control_and_is_cleared_with_session() {
+        let capture = serde_json::json!({"pid":12,"contextId":"12:window:input","text":"Private input","selectionId":"range"});
+        let mut popup = Popover::default();
+        popup.begin(identity(&capture, "en"), None, Some(&capture));
+        assert_eq!(
+            popup.tracking(),
+            serde_json::json!({"pid":12,"contextId":"12:window:input"})
+        );
+        let mut other = capture.clone();
+        other["contextId"] = serde_json::json!("12:other-window:input");
+        assert_ne!(identity(&capture, "en"), identity(&other, "en"));
+        popup.observe(&identity(&other, "en"), None);
+        assert!(popup.tracking().is_null());
+    }
     fn fixture(x: f64, y: f64) -> Anchor {
         Anchor {
             rect: Rect {
@@ -398,7 +423,7 @@ mod tests {
     #[test]
     fn late_results_closing_and_dragging_do_not_resurrect_or_snap() {
         let mut popup = Popover::default();
-        let token = popup.begin("first".into(), Some(fixture(300.0, 500.0)));
+        let token = popup.begin("first".into(), Some(fixture(300.0, 500.0)), None);
         assert!(matches!(popup.update(), Update::Place(_)));
         popup.pin();
         popup.observe("first", Some(fixture(300.0, 400.0)));
@@ -408,7 +433,7 @@ mod tests {
         assert!(matches!(popup.update(), Update::Hide));
         popup.observe("first", Some(fixture(300.0, 350.0)));
         assert!(matches!(popup.update(), Update::None));
-        popup.begin("second".into(), Some(fixture(300.0, 500.0)));
+        popup.begin("second".into(), Some(fixture(300.0, 500.0)), None);
         assert!(matches!(popup.update(), Update::Place(_)));
         popup.observe("third", Some(fixture(300.0, 500.0)));
         assert!(!popup.current(token));
@@ -419,7 +444,7 @@ mod tests {
         let mut popup = Popover::default();
         let mut a = fixture(300.0, 500.0);
         a.cursor = true;
-        popup.begin("first".into(), Some(a.clone()));
+        popup.begin("first".into(), Some(a.clone()), None);
         popup.update();
         a.rect.x += 100.0;
         popup.observe("first", Some(a));
@@ -438,7 +463,7 @@ mod tests {
     #[test]
     fn whole_input_write_waits_without_showing_or_requiring_a_selection() {
         let mut popup = Popover::default();
-        let token = popup.begin("input".into(), Some(fixture(300.0, 500.0)));
+        let token = popup.begin("input".into(), Some(fixture(300.0, 500.0)), None);
         popup.present(false);
         assert!(popup.waiting_to_write());
         assert!(popup.current(token));

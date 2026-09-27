@@ -7,6 +7,7 @@ type Settings = {
   engine: "system" | "llm";
   targetLanguage: string;
   autoSelection: boolean;
+  automaticApps: string[];
   writeShortcut: string;
   readShortcut: string;
   endpoint: string;
@@ -142,7 +143,7 @@ if (popup) {
         <section id="demos">
           <div class="heading-row"><div><div class="eyebrow"><span></span> THINK IN YOUR LANGUAGE</div><h1>想法，不必绕远路<span>。</span></h1><p class="subtitle">写下你想说的，读懂你想看的。</p></div><span class="demo-badge"><span></span>交互演示</span></div>
           <div class="demo-grid">${demoMarkup()}</div>
-          <div class="demo-footnote"><span>固定样例 · 阅读演示为开启自动划词后的效果</span><button id="try-workbench" class="text-button">去翻译一段 ${icon("arrow")}</button></div>
+          <div class="demo-footnote"><span>固定样例 · 自动划词默认仅限 Codex / Claude Desktop</span><button id="try-workbench" class="text-button">去翻译一段 ${icon("arrow")}</button></div>
         </section>
         <section id="workbench" hidden>
           <div class="heading-row"><div><div class="eyebrow">A SPACE FOR YOUR WORDS</div><h1>让想法，跨过语言。</h1><p class="subtitle">粘贴一段文字，在这里完成翻译。</p></div></div>
@@ -159,7 +160,7 @@ if (popup) {
             <div class="setting-card"><h2>翻译引擎</h2><div class="engine-choices"><label><input type="radio" name="engine" value="system" checked /><span><strong>系统翻译</strong><small>macOS · 本机处理 · 无需 API Key</small></span></label><label><input type="radio" name="engine" value="llm" /><span><strong>自定义 LLM</strong><small>macOS / Windows · 兼容 Chat Completions 接口</small></span></label></div>
             <p id="system-help" class="field-help">系统会在需要时提示下载语言包。</p>
             <div id="llm-fields" hidden><label class="field">API 地址<input id="endpoint" type="url" placeholder="https://your-provider.com/v1" autocomplete="off" /></label><div class="field-row"><label class="field">模型名称<input id="model" placeholder="服务商提供的模型 ID" autocomplete="off" /></label><label class="field">API Key<input id="api-key" type="password" placeholder="留空保留已保存的密钥" autocomplete="new-password" /></label></div><label class="checkbox-row"><input id="delete-key" type="checkbox" />删除当前服务已保存的密钥</label><p class="field-help">密钥保存在系统凭据库。文字只发送到你配置的服务；本机 LLM 可使用 localhost 地址。</p></div></div>
-            <div class="setting-card"><h2>阅读与快捷键</h2><div class="field-row"><label class="field">阅读目标语言<select id="reading-language">${languageOptions}</select></label><label class="field">划词自动翻译<span class="switch-row"><input id="auto-selection" type="checkbox" /><span>选区稳定后显示译文</span></span></label></div><div class="field-row"><label class="field">写入英文快捷键<input id="write-key" aria-label="写入英文快捷键" /></label><label class="field">阅读翻译快捷键<input id="read-key" aria-label="阅读翻译快捷键" /></label></div><p class="field-help">可直接按组合键录入。翻译只负责回填，不会替你按发送；输入变化时保留译文供复制。</p></div>
+            <div class="setting-card"><h2>阅读与快捷键</h2><div class="field-row"><label class="field">阅读目标语言<select id="reading-language">${languageOptions}</select></label><label class="field">划词自动翻译<span class="switch-row"><input id="auto-selection" type="checkbox" /><span>仅在白名单应用中触发</span></span></label></div><div class="allowlist-field"><span>自动划词白名单</span><div><label><input id="allow-codex" type="checkbox" />Codex</label><label><input id="allow-claude" type="checkbox" />Claude Desktop</label></div><p class="field-help">只在所选应用的阅读正文中自动翻译；输入框和文件对话框忽略。手动快捷键不受白名单限制。</p></div><div class="field-row"><label class="field">写入英文快捷键<input id="write-key" aria-label="写入英文快捷键" /></label><label class="field">阅读翻译快捷键<input id="read-key" aria-label="阅读翻译快捷键" /></label></div><p class="field-help">可直接按组合键录入。翻译只负责回填，不会替你按发送；输入变化时保留译文供复制。</p></div>
             <div class="action-row"><span class="privacy-note">不保存翻译历史</span><button class="button primary" type="submit" id="save">保存设置 ${icon("check")}</button></div>
           </form>
         </section>
@@ -275,6 +276,7 @@ if (popup) {
       engine: selectedEngine(),
       targetLanguage: $<HTMLSelectElement>("reading-language").value,
       autoSelection: $<HTMLInputElement>("auto-selection").checked,
+      automaticApps: ["codex", "claude"].filter(app => $<HTMLInputElement>(`allow-${app}`).checked),
       writeShortcut: $<HTMLInputElement>("write-key").value,
       readShortcut: $<HTMLInputElement>("read-key").value,
       endpoint: $<HTMLInputElement>("endpoint").value.trim(),
@@ -339,7 +341,9 @@ async function refresh(initializeForm = true) {
       ? "跨应用翻译已就绪"
       : "再一步，连接你的工作流";
     $("permission-description").textContent = status.accessibility
-      ? "回到聊天或编辑器，选中文字或按快捷键即可。"
+      ? (s.autoSelection && s.automaticApps.length
+        ? `${s.automaticApps.map(app => app === "codex" ? "Codex" : "Claude Desktop").join(" / ")} 中划选正文，松开鼠标即可。`
+        : "自动划词已关闭，仍可使用手动翻译快捷键。")
       : "开启辅助功能后，才能读取选区并将英文回填到原输入框。";
     $("permission").hidden = status.accessibility;
     $("permission-banner").classList.toggle("ready", status.accessibility);
@@ -360,6 +364,9 @@ async function refresh(initializeForm = true) {
       $("llm-fields").hidden = s.engine !== "llm";
       $<HTMLSelectElement>("reading-language").value = s.targetLanguage;
       $<HTMLInputElement>("auto-selection").checked = s.autoSelection;
+      for (const app of ["codex", "claude"]) {
+        $<HTMLInputElement>(`allow-${app}`).checked = s.automaticApps.includes(app);
+      }
       $<HTMLInputElement>("write-key").value = s.writeShortcut;
       $<HTMLInputElement>("read-key").value = s.readShortcut;
       $<HTMLInputElement>("endpoint").value = s.endpoint;

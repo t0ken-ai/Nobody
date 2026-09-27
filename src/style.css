@@ -344,6 +344,11 @@ h2 {
   gap: 5px;
   margin-top: 10px;
 }
+.allowlist-field { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 13px; font-size: 10px; color: #68816f; }
+.allowlist-field > div { display: flex; gap: 24px; margin-top: 8px; }
+.allowlist-field label { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: #435f4e; }
+.allowlist-field input { accent-color: var(--accent); }
+.allowlist-field .field-help { margin-top: 8px; }
 .popup-root,
 body.popup {
   background: transparent;

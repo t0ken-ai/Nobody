@@ -5,6 +5,7 @@ mod config;
 mod document;
 mod platform;
 mod popover;
+mod selection;
 mod translation;
 
 use serde::{Deserialize, Serialize};
@@ -264,11 +265,11 @@ async fn translate_selection(
     // Capture the anchor before the user moves the pointer. A translation that
     // finishes after another selection must never appear over the new text.
     let anchor = popover::initial_anchor(&app, &capture);
-    let token = state
-        .popover
-        .lock()
-        .unwrap()
-        .begin(popover::identity(&capture, &s.target_language), anchor);
+    let token = state.popover.lock().unwrap().begin(
+        popover::identity(&capture, &s.target_language),
+        anchor,
+        Some(&capture),
+    );
     if write {
         state.popover.lock().unwrap().present(false);
         sync_popover(&app, &state);
@@ -350,7 +351,11 @@ fn report_error(app: &tauri::AppHandle, error: String, popup: bool) {
         let state = app.state::<AppState>();
         if !state.popover.lock().unwrap().active() {
             let anchor = popover::pointer_anchor(app);
-            state.popover.lock().unwrap().begin("error".into(), anchor);
+            state
+                .popover
+                .lock()
+                .unwrap()
+                .begin("error".into(), anchor, None);
         }
         state.popover.lock().unwrap().present(true);
         if let Some(window) = app.get_webview_window("result") {
@@ -360,73 +365,85 @@ fn report_error(app: &tauri::AppHandle, error: String, popup: bool) {
     }
 }
 
-/// Debounce a stable selection for 700 ms. Keep observing geometry while a
-/// translation runs so scrolling and stale results remain correct. Native calls
-/// inspect only the focused selection; no global input or screen recording.
+/// Observe only allowlisted apps or the exact source of an existing result.
+/// Native adapters report mouse metadata and control context; the shared gate
+/// requires a fresh completed selection before debouncing for 700 ms. Manual
+/// result tracking remains independent of the automatic eligibility policy.
 fn watch_selection(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
-        let mut candidate = String::new();
-        let mut handled = String::new();
-        let mut stable_since = std::time::Instant::now();
+        let mut gate = selection::Gate::default();
+        let mut generation = 0;
         loop {
             tokio::time::sleep(Duration::from_millis(350)).await;
             let state = app.state::<AppState>();
             let s = preferences(&state);
+            let current_generation = state.generation.load(Ordering::SeqCst);
+            if generation != current_generation {
+                gate.clear();
+                state.popover.lock().unwrap().clear();
+                sync_popover(&app, &state);
+                generation = current_generation;
+            }
             if state.busy.load(Ordering::SeqCst) && state.popover.lock().unwrap().waiting_to_write()
             {
+                gate.clear();
                 continue;
             }
-            if !s.auto_selection && !state.popover.lock().unwrap().active() {
-                candidate.clear();
-                continue;
-            }
+            let tracking = state.popover.lock().unwrap().tracking();
+            // Continue metadata polling when disabled: it updates the native
+            // allowlist and lets a previously visible result follow its source.
+            let allowed = if s.auto_selection {
+                s.automatic_apps.clone()
+            } else {
+                vec![]
+            };
             let Ok(selected) = state
                 .platform
-                .call(json!({"op":"selection", "whole":false, "ticket":false, "geometry":true}))
+                .call(json!({"op":"selection", "whole":false,
+                "ticket":false, "geometry":true, "allowedApps":allowed, "tracking":tracking}))
                 .await
             else {
-                candidate.clear();
-                handled.clear();
+                gate.clear();
                 state.popover.lock().unwrap().selection_lost();
                 sync_popover(&app, &state);
                 continue;
             };
-            // Interacting with the popover (selection/copy/drag) temporarily
-            // focuses TranslateMe; retain the source until the user returns.
+            // A click/drag on our own result is not a new source selection.
             if selected["self"] == true {
+                gate.clear();
                 continue;
             }
+            let identity = popover::identity(&selected, &s.target_language);
             let text = selected["text"].as_str().unwrap_or("");
-            if text.trim().chars().count() < 2 {
-                candidate.clear();
-                handled.clear();
+            if text.trim().is_empty() || selected["ignored"] == true {
+                // Consume an ignored gesture before clearing its UI, so moving
+                // from a filename/input to a body cannot reuse that gesture.
+                gate.observe(&selected, &identity, std::time::Instant::now(), true);
                 state.popover.lock().unwrap().clear();
                 sync_popover(&app, &state);
                 continue;
             }
-            let identity = popover::identity(&selected, &s.target_language);
             let anchor = popover::anchor(&app, &selected);
             state.popover.lock().unwrap().observe(&identity, anchor);
             sync_popover(&app, &state);
             if !s.auto_selection {
+                gate.clear();
                 continue;
             }
-            if candidate != identity {
-                candidate = identity.clone();
-                stable_since = std::time::Instant::now();
+            if !gate.observe(
+                &selected,
+                &identity,
+                std::time::Instant::now(),
+                state.busy.load(Ordering::SeqCst),
+            ) {
                 continue;
             }
-            if identity == handled
-                || stable_since.elapsed() < Duration::from_millis(700)
-                || state.busy.load(Ordering::SeqCst)
-            {
-                continue;
-            }
-            handled = identity;
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(error) = translate_selection(app.clone(), false, Some(selected)).await {
-                    report_error(&app, error, true);
+                    // An automatic request must not resurrect a popup after a
+                    // context change or a race with an explicit shortcut.
+                    report_error(&app, error, false);
                 }
             });
         }
@@ -511,7 +528,8 @@ fn main() {
                     let state = handle.state::<AppState>();
                     // The adapter configures only the already-created result
                     // window. Complete this before observing other applications.
-                    if let Err(error) = state.platform.call(json!({"op":"configurePopover"})).await {
+                    if let Err(error) = state.platform.call(json!({"op":"configurePopover"})).await
+                    {
                         report_error(&handle, error, false);
                     }
                     watch_selection(handle.clone());

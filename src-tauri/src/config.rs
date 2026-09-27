@@ -9,6 +9,9 @@ pub struct Settings {
     pub engine: String,
     pub target_language: String,
     pub auto_selection: bool,
+    /// Stable product keys, resolved to native application identities by each
+    /// adapter. Older preference files inherit only these two defaults.
+    pub automatic_apps: Vec<String>,
     pub write_shortcut: String,
     pub read_shortcut: String,
     pub endpoint: String,
@@ -20,6 +23,7 @@ impl Default for Settings {
             engine: "system".into(),
             target_language: "zh-Hans".into(),
             auto_selection: true,
+            automatic_apps: vec!["codex".into(), "claude".into()],
             write_shortcut: "CommandOrControl+Shift+E".into(),
             read_shortcut: "CommandOrControl+Shift+D".into(),
             endpoint: String::new(),
@@ -73,6 +77,12 @@ pub fn endpoint_url(raw: &str) -> Result<url::Url, String> {
 }
 
 pub fn validate(s: &Settings) -> Result<(), String> {
+    if s.automatic_apps
+        .iter()
+        .any(|app| !["codex", "claude"].contains(&app.as_str()))
+    {
+        return Err("自动划词白名单仅支持 Codex 和 Claude Desktop。".into());
+    }
     if !["system", "llm"].contains(&s.engine.as_str()) {
         return Err("未知的翻译引擎。".into());
     }
@@ -138,6 +148,16 @@ pub fn set_key(endpoint: &str, key: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn existing_settings_get_narrow_defaults_and_empty_allowlist_stays_empty() {
+        let old: Settings = serde_json::from_str(r#"{"autoSelection":true}"#).unwrap();
+        assert_eq!(old.automatic_apps, ["codex", "claude"]);
+        let empty: Settings = serde_json::from_str(r#"{"automaticApps":[]}"#).unwrap();
+        assert!(empty.automatic_apps.is_empty());
+        let mut invalid = old;
+        invalid.automatic_apps.push("terminal".into());
+        assert!(validate(&invalid).is_err());
+    }
     #[test]
     fn rejects_credential_leaks_and_normalizes_compatible_endpoints() {
         for raw in [
