@@ -1,6 +1,7 @@
 /* LAN UI inherits the application's system appearance. Local tokens keep this
    feature isolated from the translation popup and the tutorial palettes. */
 #transfer { --lan-surface:#ffffffb8; --lan-soft:#edf3ee; --lan-border:#dce6de; --lan-text:#263f31; --lan-secondary:#708678; --lan-inset:#f7faf7; }
+.lan-heading h1 { font-size:24px; margin:0; letter-spacing:-.6px; }
 .lan-status { font-size:10px; padding:7px 11px; border-radius:20px; background:var(--lan-soft); color:var(--lan-secondary); white-space:nowrap; }
 .lan-status[data-state=running] { color:var(--accent); }
 .lan-status[data-state=error] { color:#a65e47; }
@@ -10,8 +11,7 @@
 .lan-section-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .lan-section-heading h2 { margin:0; font-size:12px; }
 .lan-section-heading > span { color:var(--lan-secondary); font-size:10px; }
-.lan-devices > .field-help { margin:5px 0 18px; }
-.lan-peer-list { display:grid; gap:8px; }
+.lan-peer-list { display:grid; gap:8px; margin-top:15px; }
 .lan-peer { border:1px solid transparent; border-radius:10px; background:var(--lan-inset); }
 .lan-peer.selected { border-color:var(--accent); background:var(--lan-soft); }
 .lan-peer-select { display:flex; width:100%; align-items:center; gap:10px; border:0; text-align:left; background:transparent; padding:12px 10px; color:var(--lan-text); }
@@ -19,11 +19,13 @@
 .lan-peer-select > span:nth-child(2) { min-width:0; flex:1; }
 .lan-peer-select strong { display:block; font-size:12px; overflow-wrap:anywhere; font-weight:550; }
 .lan-peer-select small { display:block; margin-top:3px; font-size:9px; color:var(--lan-secondary); }
-.lan-peer-id { display:block; margin-top:2px; font:8px ui-monospace,monospace; color:var(--lan-secondary); opacity:.85; }
 .lan-peer-select > i { width:5px; height:5px; background:var(--accent); border-radius:50%; }
 .lan-peer.offline .lan-peer-select > i { background:var(--lan-secondary); opacity:.5; }
-.lan-forget { margin:0 12px 9px auto; font-size:9px; }
-.lan-device-hint { font-size:10px; color:var(--lan-secondary); line-height:1.7; margin-top:20px; }
+.lan-peer-actions { display:flex; justify-content:flex-end; padding:0 10px 10px; }
+/* Keep revocation visually separate from selecting a device, with the same
+   visible border and keyboard affordance in both system appearances. */
+.lan-forget.button { background:var(--lan-surface); border-color:var(--lan-border); color:var(--lan-text); }
+.lan-forget.button:hover { border-color:var(--lan-secondary); background:var(--lan-soft); }
 .lan-empty { min-height:178px; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; color:var(--lan-secondary); }
 .lan-empty > span { font-size:44px; font-weight:300; opacity:.65; }
 .lan-empty strong { font-size:11px; font-weight:500; margin:4px 0 7px; }
@@ -53,9 +55,12 @@
 .lan-directory > div { min-width:0; }
 #lan-directory-path { font:10px/1.6 ui-monospace,monospace; color:var(--lan-text); overflow-wrap:anywhere; margin-top:3px; }
 .lan-inbox-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:27px 0 12px; }
-.lan-inbox-heading h2 { margin:0; }
-.lan-inbox-heading p { margin:4px 0 0; }
-.lan-record-actions { display:flex; gap:18px; align-items:center; }
+.lan-inbox-heading h2 { margin:0; font-size:13px; white-space:nowrap; }
+.lan-record-count { font-size:10px; color:var(--lan-secondary); font-weight:400; margin-left:6px; }
+.lan-record-actions { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+.lan-pagination { display:flex; align-items:center; gap:8px; }
+.lan-pagination .button { min-width:28px; padding:3px 8px; font-size:18px; line-height:22px; }
+#lan-page-info { min-width:36px; text-align:center; font-size:10px; color:var(--lan-secondary); font-variant-numeric:tabular-nums; }
 .lan-tabs { display:flex; gap:3px; padding:3px; background:var(--lan-soft); border-radius:8px; }
 .lan-tabs button { border:0; background:transparent; color:var(--lan-secondary); padding:5px 10px; border-radius:5px; font-size:10px; }
 .lan-tabs button.active { background:var(--lan-surface); color:var(--accent); box-shadow:0 1px 3px #173a2010; }
@@ -72,7 +77,9 @@
 .lan-phase.failed,.lan-record-error { color:#a55c44; }
 .lan-progress { height:3px; background:var(--lan-soft); border-radius:5px; margin-top:13px; overflow:hidden; }
 .lan-progress > span { display:block; height:100%; background:var(--accent); transition:width .2s ease; }
-.lan-preview { margin:12px 0 7px; padding:10px 12px; background:var(--lan-inset); border-radius:6px; color:var(--lan-text); font:11px/1.65 ui-monospace,monospace; white-space:pre-wrap; overflow-wrap:anywhere; max-height:120px; overflow:auto; }
+/* Compact previews never remove the stored text; the explicit full-text action
+   still reads the complete record. Avoid nested scroll areas in the history. */
+.lan-preview { margin:10px 0 5px; padding:0 12px; border-left:2px solid var(--lan-border); color:var(--lan-text); font:11px/1.65 ui-monospace,monospace; white-space:pre-wrap; overflow-wrap:anywhere; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; overflow:hidden; }
 .lan-text-actions { display:flex; gap:16px; justify-content:flex-end; }
 .lan-received-files { margin:9px 0 0; padding:0; list-style:none; }
 .lan-received-files li { display:flex; align-items:center; gap:12px; padding:5px 0; font-size:11px; }
