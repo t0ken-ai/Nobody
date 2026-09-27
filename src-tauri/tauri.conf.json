@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       { "label": "main", "title": "TranslateMe", "width": 1060, "height": 780, "minWidth": 800, "minHeight": 630, "backgroundColor": "#f7f8fa" },
-      { "label": "result", "title": "TranslateMe · 译文", "url": "index.html?view=result", "width": 420, "height": 330, "minWidth": 320, "minHeight": 220, "visible": false, "focus": false, "alwaysOnTop": true, "skipTaskbar": true }
+      { "label": "result", "title": "TranslateMe · 译文", "url": "index.html?view=result", "width": 380, "height": 144, "resizable": false, "decorations": false, "visible": false, "focus": false, "alwaysOnTop": true, "visibleOnAllWorkspaces": true, "acceptFirstMouse": true, "skipTaskbar": true, "shadow": true, "backgroundColor": "#00000000", "windowEffects": { "effects": ["popover", "acrylic"], "state": "active", "radius": 16 } }
     ],
     "security": { "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'" }
   },

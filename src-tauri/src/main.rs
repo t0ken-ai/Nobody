@@ -4,6 +4,7 @@
 mod config;
 mod document;
 mod platform;
+mod popover;
 mod translation;
 
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,7 @@ struct AppState {
     busy: AtomicBool,
     generation: AtomicU64,
     last: Mutex<Option<TranslationResult>>,
+    popover: Mutex<popover::Popover>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -151,6 +153,49 @@ fn get_last_result(state: tauri::State<'_, AppState>) -> Option<TranslationResul
     state.last.lock().unwrap().clone()
 }
 
+/// Window state is computed under its own mutex; platform/UI calls happen only
+/// after release, keeping the polling worker independent of the main thread.
+fn sync_popover(app: &tauri::AppHandle, state: &AppState) {
+    let update = state.popover.lock().unwrap().update();
+    popover::apply(app, update);
+}
+
+/// Only the result webview may drag, dismiss or resize its own popover. Pinning
+/// precedes the native drag loop so a concurrent selection poll cannot snap it.
+#[tauri::command]
+fn drag_popover(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    if window.label() != "result" {
+        return Err("只允许拖动译文浮窗。".into());
+    }
+    state.popover.lock().unwrap().pin();
+    window.start_dragging().map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn dismiss_popover(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    if window.label() != "result" {
+        return Err("只允许关闭译文浮窗。".into());
+    }
+    state.popover.lock().unwrap().dismiss();
+    sync_popover(window.app_handle(), &state);
+    window.hide().map_err(|e| e.to_string())
+}
+/// The frontend measures content, while the backend clamps height and applies
+/// screen geometry. Long translations scroll instead of covering the display.
+#[tauri::command]
+fn resize_popover(window: tauri::WebviewWindow, state: tauri::State<'_, AppState>, height: f64) {
+    if window.label() != "result" {
+        return;
+    }
+    state.popover.lock().unwrap().resize(height);
+    sync_popover(window.app_handle(), &state);
+}
+
 #[tauri::command]
 async fn translate_text(
     app: tauri::AppHandle,
@@ -175,14 +220,19 @@ async fn translate_text(
     Ok(result)
 }
 
+/// Workbench results update only the workbench. A live selection's popover must
+/// not silently switch to unrelated text translated in the main window.
 fn publish(app: &tauri::AppHandle, state: &AppState, result: &TranslationResult, popup: bool) {
     *state.last.lock().unwrap() = Some(result.clone());
-    let _ = app.emit("translation-result", result);
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.emit("translation-result", result);
+    }
     if popup {
+        state.popover.lock().unwrap().present(true);
         if let Some(window) = app.get_webview_window("result") {
-            // Showing without focus preserves the source app's selection.
-            let _ = window.show();
+            let _ = window.emit("translation-result", result);
         }
+        sync_popover(app, state);
     }
 }
 
@@ -202,7 +252,7 @@ async fn translate_selection(
         None => {
             state
                 .platform
-                .call(json!({"op":"capture", "whole":write, "ticket":write}))
+                .call(json!({"op":"capture", "whole":write, "ticket":write, "geometry":true}))
                 .await?
         }
     };
@@ -211,10 +261,41 @@ async fn translate_selection(
         .ok_or("没有可翻译的文字。")?
         .to_string();
     let target = if write { "en" } else { &s.target_language };
-    let _ = app.emit("translation-progress", json!({"message":"正在翻译…"}));
+    // Capture the anchor before the user moves the pointer. A translation that
+    // finishes after another selection must never appear over the new text.
+    let anchor = popover::initial_anchor(&app, &capture);
+    let token = state
+        .popover
+        .lock()
+        .unwrap()
+        .begin(popover::identity(&capture, &s.target_language), anchor);
+    if write {
+        state.popover.lock().unwrap().present(false);
+        sync_popover(&app, &state);
+    }
+    if !write {
+        if let Some(window) = app.get_webview_window("result") {
+            let _ = window.emit(
+                "translation-progress",
+                json!({"message":"正在翻译…", "target":target}),
+            );
+        }
+        sync_popover(&app, &state);
+    }
     let translated =
-        translation::translate(&state.platform, &state.http, &s, &source, target).await?;
+        match translation::translate(&state.platform, &state.http, &s, &source, target).await {
+            Ok(text) => text,
+            Err(error) => {
+                if state.popover.lock().unwrap().current(token) {
+                    report_error(&app, error, true);
+                }
+                return Ok(());
+            }
+        };
     if state.generation.load(Ordering::SeqCst) != generation {
+        return Ok(());
+    }
+    if !state.popover.lock().unwrap().current(token) {
         return Ok(());
     }
     let mut result = TranslationResult {
@@ -253,21 +334,35 @@ async fn translate_selection(
         }
     }
     let popup = !result.replaced;
+    if !popup {
+        state.popover.lock().unwrap().clear();
+        sync_popover(&app, &state);
+    }
     publish(&app, &state, &result, popup);
     Ok(())
 }
 
 fn report_error(app: &tauri::AppHandle, error: String, popup: bool) {
-    let _ = app.emit("translation-error", &error);
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.emit("translation-error", &error);
+    }
     if popup {
-        if let Some(window) = app.get_webview_window("result") {
-            let _ = window.show();
+        let state = app.state::<AppState>();
+        if !state.popover.lock().unwrap().active() {
+            let anchor = popover::pointer_anchor(app);
+            state.popover.lock().unwrap().begin("error".into(), anchor);
         }
+        state.popover.lock().unwrap().present(true);
+        if let Some(window) = app.get_webview_window("result") {
+            let _ = window.emit("translation-error", &error);
+        }
+        sync_popover(app, &state);
     }
 }
 
-/// Debounce a stable selection for 700 ms and translate it once. Polling reads
-/// only the focused accessibility element; no global keystroke/mouse recording.
+/// Debounce a stable selection for 700 ms. Keep observing geometry while a
+/// translation runs so scrolling and stale results remain correct. Native calls
+/// inspect only the focused selection; no global input or screen recording.
 fn watch_selection(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut candidate = String::new();
@@ -277,36 +372,63 @@ fn watch_selection(app: tauri::AppHandle) {
             tokio::time::sleep(Duration::from_millis(350)).await;
             let state = app.state::<AppState>();
             let s = preferences(&state);
-            if !s.auto_selection || state.busy.load(Ordering::SeqCst) {
+            if state.busy.load(Ordering::SeqCst) && state.popover.lock().unwrap().waiting_to_write()
+            {
+                continue;
+            }
+            if !s.auto_selection && !state.popover.lock().unwrap().active() {
                 candidate.clear();
                 continue;
             }
             let Ok(selected) = state
                 .platform
-                .call(json!({"op":"selection", "whole":false, "ticket":false}))
+                .call(json!({"op":"selection", "whole":false, "ticket":false, "geometry":true}))
                 .await
             else {
                 candidate.clear();
                 handled.clear();
+                state.popover.lock().unwrap().selection_lost();
+                sync_popover(&app, &state);
                 continue;
             };
-            let text = selected["text"].as_str().unwrap_or("");
-            if text.trim().chars().count() < 2 {
+            // Interacting with the popover (selection/copy/drag) temporarily
+            // focuses TranslateMe; retain the source until the user returns.
+            if selected["self"] == true {
                 continue;
             }
-            let identity = format!("{}:{}:{}", selected["pid"], s.target_language, text);
+            let text = selected["text"].as_str().unwrap_or("");
+            if text.trim().chars().count() < 2 {
+                candidate.clear();
+                handled.clear();
+                state.popover.lock().unwrap().clear();
+                sync_popover(&app, &state);
+                continue;
+            }
+            let identity = popover::identity(&selected, &s.target_language);
+            let anchor = popover::anchor(&app, &selected);
+            state.popover.lock().unwrap().observe(&identity, anchor);
+            sync_popover(&app, &state);
+            if !s.auto_selection {
+                continue;
+            }
             if candidate != identity {
                 candidate = identity.clone();
                 stable_since = std::time::Instant::now();
                 continue;
             }
-            if identity == handled || stable_since.elapsed() < Duration::from_millis(700) {
+            if identity == handled
+                || stable_since.elapsed() < Duration::from_millis(700)
+                || state.busy.load(Ordering::SeqCst)
+            {
                 continue;
             }
             handled = identity;
-            if let Err(error) = translate_selection(app.clone(), false, Some(selected)).await {
-                report_error(&app, error, true);
-            }
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = translate_selection(app.clone(), false, Some(selected)).await {
+                    report_error(&app, error, true);
+                }
+            });
         }
     });
 }
@@ -354,6 +476,7 @@ fn main() {
                 busy: AtomicBool::new(false),
                 generation: AtomicU64::new(0),
                 last: Mutex::new(None),
+                popover: Mutex::new(popover::Popover::default()),
             });
             let (write, read) = parse_shortcuts(&settings).map_err(std::io::Error::other)?;
             app.global_shortcut().register_multiple([write, read])?;
@@ -381,12 +504,29 @@ fn main() {
                     _ => {}
                 })
                 .build(app)?;
+            #[cfg(target_os = "macos")]
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = handle.state::<AppState>();
+                    // The adapter configures only the already-created result
+                    // window. Complete this before observing other applications.
+                    if let Err(error) = state.platform.call(json!({"op":"configurePopover"})).await {
+                        report_error(&handle, error, false);
+                    }
+                    watch_selection(handle.clone());
+                });
+            }
+            #[cfg(not(target_os = "macos"))]
             watch_selection(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
+                if window.label() == "result" {
+                    window.state::<AppState>().popover.lock().unwrap().dismiss();
+                }
                 let _ = window.hide();
             }
         })
@@ -396,7 +536,10 @@ fn main() {
             request_permission,
             translate_text,
             copy_text,
-            get_last_result
+            get_last_result,
+            drag_popover,
+            dismiss_popover,
+            resize_popover
         ])
         .run(tauri::generate_context!())
         .expect("TranslateMe could not start");

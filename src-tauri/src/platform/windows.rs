@@ -14,6 +14,10 @@ use windows::Win32::{
             CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
             COINIT_MULTITHREADED,
         },
+        Ole::{
+            SafeArrayDestroy, SafeArrayGetDim, SafeArrayGetElement, SafeArrayGetElemsize,
+            SafeArrayGetLBound, SafeArrayGetUBound,
+        },
         Variant::{VariantClear, VariantToBoolean, VT_BOOL},
     },
     UI::{Accessibility::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
@@ -98,6 +102,61 @@ unsafe fn selection(pattern: &IUIAutomationTextPattern) -> Option<IUIAutomationT
     ranges.GetElement(0).ok()
 }
 
+/// UIA returns physical screen coordinates for visible lines. Copy the owned
+/// SAFEARRAY on this COM thread and always free it; an empty array explicitly
+/// means off-screen, whereas an unsupported API falls back to the pointer.
+unsafe fn selection_anchor(range: Option<&IUIAutomationTextRange>) -> Option<Value> {
+    let rectangles = range.and_then(|range| {
+        let array = range.GetBoundingRectangles().ok()?;
+        if array.is_null() {
+            return None;
+        }
+        let copied = (|| {
+            if SafeArrayGetDim(array) != 1 || SafeArrayGetElemsize(array) != 8 {
+                return None;
+            }
+            let first = SafeArrayGetLBound(array, 1).ok()?;
+            let last = SafeArrayGetUBound(array, 1).ok()?;
+            let count = i64::from(last) - i64::from(first) + 1;
+            if !(0..=64000).contains(&count) || count % 4 != 0 {
+                return None;
+            }
+            let mut values = Vec::<f64>::with_capacity(count as usize);
+            for index in first..=last {
+                let mut value = 0.0_f64;
+                SafeArrayGetElement(array, &index, &mut value as *mut f64 as _).ok()?;
+                if !value.is_finite() {
+                    return None;
+                }
+                values.push(value);
+            }
+            Some(values)
+        })();
+        let _ = SafeArrayDestroy(array);
+        copied
+    });
+    let rect = rectangles.as_ref().and_then(|values| {
+        values
+            .chunks_exact(4)
+            .filter(|r| r[2] > 0.0 && r[3] > 0.0)
+            .reduce(|a, b| if b[1] < a[1] { b } else { a })
+    });
+    if let Some(r) = rect {
+        return Some(
+            json!({"rect":{"x":r[0],"y":r[1],"width":r[2],"height":r[3]},
+            "space":"physical","kind":"selection","visible":true}),
+        );
+    }
+    let mut point = windows::Win32::Foundation::POINT::default();
+    GetCursorPos(&mut point).ok()?;
+    Some(
+        json!({"rect":{"x":point.x,"y":point.y,"width":1,"height":1},
+        "space":"physical","kind":"cursor","visible":rectangles.is_none()}),
+    )
+}
+
+/// Capture the focused range, optionally adding geometry for the read popover.
+/// Geometry failures never weaken password protection or replacement tickets.
 unsafe fn capture(
     automation: &IUIAutomation,
     snapshots: &mut HashMap<String, Snapshot>,
@@ -162,6 +221,9 @@ unsafe fn capture(
     }
     let mut result =
         json!({"text":text,"app":"Windows 应用","pid":pid,"editable":editable,"whole":whole});
+    if request["geometry"] == true {
+        result["anchor"] = selection_anchor(range.as_ref()).unwrap_or(Value::Null);
+    }
     if request["ticket"] == true {
         snapshots.retain(|_, s| s.created.elapsed() < Duration::from_secs(120));
         if snapshots.len() >= 16 {
@@ -275,6 +337,7 @@ unsafe fn dispatch(
         "status" | "permission" => {
             Ok(json!({"accessibility":true,"systemTranslation":false,"platform":"Windows"}))
         }
+        "selection" if foreground_pid() == std::process::id() => Ok(json!({"self":true})),
         "selection" | "capture" => capture(automation, snapshots, &request),
         "replace" => replace(automation, snapshots, &request),
         "copy" => {

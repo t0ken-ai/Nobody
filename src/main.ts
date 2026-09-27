@@ -1,6 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./style.css";
 
 type Settings = {
@@ -61,6 +60,7 @@ const icon = (name: string) => {
     arrow: '<path d="M5 12h14m-5-5 5 5-5 5"/>',
     copy: '<rect x="8" y="8" width="12" height="13" rx="2"/><path d="M15 8V3H3v13h5"/>',
     check: '<path d="m5 12 4 4L19 6"/>',
+    close: '<path d="m6 6 12 12M18 6 6 18"/>',
   };
   return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] ?? paths.translate}</svg>`;
 };
@@ -69,6 +69,21 @@ const popup = new URLSearchParams(location.search).get("view") === "result";
 let status: Status | undefined;
 let latest: Result | undefined;
 let busy = false;
+
+/** Measure content, not the current window height, to avoid a resize feedback
+ * loop. Native placement limits the final height to the available screen space. */
+function resizePopup() {
+  if (!popup || !isTauri()) return;
+  requestAnimationFrame(() => {
+    const header = document.querySelector<HTMLElement>(".popup-header")!;
+    const footer = document.querySelector<HTMLElement>(".popup-footer")!;
+    const content = $("popup-content");
+    const message = $("notice");
+    const height = header.offsetHeight + footer.offsetHeight + content.scrollHeight
+      + (message.hidden ? 0 : message.offsetHeight + 10) + 26;
+    void call("resize_popover", { height }).catch(() => {});
+  });
+}
 
 // Browser preview is intentionally nonfunctional: a missing desktop bridge must
 // never be mistaken for working translation or silently use fabricated results.
@@ -87,6 +102,7 @@ function notice(message: string, error = false) {
   node.textContent = message;
   node.className = `notice ${error ? "error" : ""}`;
   node.hidden = !message;
+  if (popup) resizePopup();
 }
 function label(code: string) {
   return languages.find(([value]) => value === code)?.[1] ?? code;
@@ -105,16 +121,28 @@ function shortcutLabel(value: string) {
 
 if (popup) {
   document.body.classList.add("popup");
+  document.documentElement.classList.add("popup-root");
   $("app").innerHTML =
-    `<header class="popup-header"><div class="mini-brand">${icon("translate")} <strong>TranslateMe</strong></div><span id="popup-language">译文</span><button id="hide" class="icon-button" aria-label="关闭">×</button></header>
-    <div id="notice" class="notice" hidden></div><main class="popup-body"><div id="popup-origin" class="eyebrow">选中文字，阅读译文</div><div id="popup-text" class="popup-text">按阅读快捷键，或在其他应用中选中文字。</div></main>
-    <footer class="popup-footer"><span id="popup-message">原文保持不变</span><button id="popup-copy" class="button small" disabled>${icon("copy")}复制</button></footer>`;
+    `<header class="popup-header" title="拖动顶部，移动译文"><div class="mini-brand">${icon("translate")} <strong id="popup-language">译文</strong></div><span class="drag-grip" aria-hidden="true">⠿</span><button id="hide" class="icon-button" aria-label="关闭译文" title="关闭 · Esc">${icon("close")}</button></header>
+    <div id="notice" class="notice" role="status" hidden></div><main class="popup-body"><div id="popup-content"><div id="popup-text" class="popup-text">选中文字，即可在附近阅读译文。</div></div></main>
+    <footer class="popup-footer"><span id="popup-origin">TranslateMe</span><span id="popup-message" class="sr-only">原文保持不变</span><button id="popup-copy" class="popup-copy" disabled title="复制译文">${icon("copy")}复制</button></footer>`;
   $("hide").onclick = () => {
-    void getCurrentWindow().hide();
+    void call("dismiss_popover");
   };
+  // Only the header initiates a native drag. Text remains selectable and the
+  // close/copy buttons never turn into drag targets or send input to the source.
+  document.querySelector<HTMLElement>(".popup-header")!.onpointerdown = (event) => {
+    if (event.button !== 0 || (event.target as Element).closest("button")) return;
+    event.preventDefault();
+    void call("drag_popover");
+  };
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") void call("dismiss_popover");
+  });
   $("popup-copy").onclick = () => {
     if (latest) void copy(latest.text);
   };
+  new ResizeObserver(resizePopup).observe($("popup-content"));
 } else {
   $("app").innerHTML = `
     <aside class="sidebar">
@@ -298,6 +326,8 @@ function display(result: Result) {
       `${result.origin} · ${result.engine === "system" ? "系统翻译" : "LLM"}`;
     $("popup-message").textContent = result.message;
     $<HTMLButtonElement>("popup-copy").disabled = false;
+    document.body.classList.remove("popup-loading");
+    resizePopup();
   } else {
     $<HTMLTextAreaElement>("output").value = result.text;
     $("result-meta").textContent =
@@ -354,17 +384,27 @@ if (isTauri()) {
   await listen<string>("translation-error", (event) => {
     notice(event.payload, true);
     if (popup) {
+      latest = undefined;
+      document.body.classList.remove("popup-loading");
       $("popup-text").textContent = "";
+      $("popup-origin").textContent = "暂时无法翻译";
       $<HTMLButtonElement>("popup-copy").disabled = true;
+      resizePopup();
     }
   });
-  await listen<{ message: string }>("translation-progress", (event) => {
+  await listen<{ message: string; target?: string }>("translation-progress", (event) => {
     notice(event.payload.message);
     // A previous selection's translation must not remain actionable while a
     // new selection is being translated in the floating window.
     if (popup) {
+      latest = undefined;
+      document.body.classList.add("popup-loading");
+      if (event.payload.target) $("popup-language").textContent = label(event.payload.target);
       $("popup-text").textContent = "";
+      $("popup-origin").textContent = "TranslateMe";
+      $("popup-message").textContent = "正在翻译";
       $<HTMLButtonElement>("popup-copy").disabled = true;
+      resizePopup();
     }
   });
   if (popup) {

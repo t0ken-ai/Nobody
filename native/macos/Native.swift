@@ -69,6 +69,94 @@ private func focused() throws -> (NSRunningApplication, AXUIElement) {
 
 enum NativeError: Error { case message(String) }
 
+/// Read only the selected range's rectangle. Some Chromium controls expose
+/// text-marker ranges instead of UTF-16 ranges; neither path reads the window's
+/// other text. A missing geometry API falls back to the current pointer.
+private func selectedBounds(_ element: AXUIElement) -> CGRect? {
+    var raw: CFTypeRef?
+    if var range = rangeAttribute(element), range.length > 0,
+       let value = AXValueCreate(.cfRange, &range) {
+        AXUIElementCopyParameterizedAttributeValue(element, kAXBoundsForRangeParameterizedAttribute as CFString, value, &raw)
+    }
+    if raw == nil, let marker = attribute(element, "AXSelectedTextMarkerRange") {
+        AXUIElementCopyParameterizedAttributeValue(element, "AXBoundsForTextMarkerRange" as CFString, marker, &raw)
+    }
+    guard let raw, CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
+    var rect = CGRect.zero
+    guard AXValueGetValue(unsafeBitCast(raw, to: AXValue.self), .cgRect, &rect),
+          [rect.minX, rect.minY, rect.width, rect.height].allSatisfy({ $0.isFinite }),
+          rect.width > 0, rect.height > 0 else { return nil }
+    return rect
+}
+
+/// AX uses top-left screen points, AppKit uses bottom-left points, and Tao
+/// flips its logical coordinates against CGDisplayPixelsHigh. Keep this
+/// conversion at the native boundary so mixed-DPI screens are not double-scaled.
+private func selectionAnchor(_ element: AXUIElement) -> [String: Any]? {
+    let screens = NSScreen.screens
+    guard let primary = screens.first else { return nil }
+    let primaryTop = primary.frame.maxY
+    let taoTop = CGFloat(CGDisplayPixelsHigh(CGMainDisplayID()))
+    let bounds = selectedBounds(element)
+    let pointer = NSEvent.mouseLocation
+    let raw = bounds ?? CGRect(x: pointer.x, y: primaryTop - pointer.y, width: 1, height: 1)
+    let center = NSPoint(x: raw.midX, y: primaryTop - raw.midY)
+    let screen = screens.first(where: { $0.frame.contains(center) })
+        ?? screens.max(by: {
+            let a = CGRect(x: $0.frame.minX, y: primaryTop - $0.frame.maxY, width: $0.frame.width, height: $0.frame.height)
+            let b = CGRect(x: $1.frame.minX, y: primaryTop - $1.frame.maxY, width: $1.frame.width, height: $1.frame.height)
+            return a.intersection(raw).width * a.intersection(raw).height < b.intersection(raw).width * b.intersection(raw).height
+        }) ?? primary
+    let work = CGRect(x: screen.visibleFrame.minX, y: primaryTop - screen.visibleFrame.maxY,
+                      width: screen.visibleFrame.width, height: screen.visibleFrame.height)
+    var visible = raw.intersection(work)
+    // Chromium may expose a selected response through a focused container with
+    // unrelated bounds. Clip only to its owning window, not that container.
+    // A previously valid range leaving the window can still hide the popover.
+    for owner in [attribute(element, kAXWindowAttribute).flatMap {
+        CFGetTypeID($0) == AXUIElementGetTypeID() ? unsafeBitCast($0, to: AXUIElement.self) : nil
+    }].compactMap({ $0 }) {
+        if let pos = attribute(owner, kAXPositionAttribute), let size = attribute(owner, kAXSizeAttribute),
+           CFGetTypeID(pos) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID() {
+            var point = CGPoint.zero
+            var extent = CGSize.zero
+            if AXValueGetValue(unsafeBitCast(pos, to: AXValue.self), .cgPoint, &point),
+               AXValueGetValue(unsafeBitCast(size, to: AXValue.self), .cgSize, &extent),
+               extent.width > 0, extent.height > 0, bounds != nil {
+                visible = visible.intersection(CGRect(origin: point, size: extent))
+            }
+        }
+    }
+    func json(_ rect: CGRect) -> [String: CGFloat] {
+        ["x": rect.minX, "y": rect.minY + taoTop - primaryTop, "width": rect.width, "height": rect.height]
+    }
+    let isVisible = !visible.isNull && !visible.isEmpty
+    // Off-screen APIs may return a zero rectangle. Preserve visible=false with
+    // finite placeholder dimensions so the shared layer does not mistake this
+    // for an unsupported API and fall back to a visible pointer anchor.
+    let hidden = CGRect(x: raw.minX, y: raw.minY, width: max(1, raw.width), height: max(1, raw.height))
+    return ["rect": json(isVisible ? visible : hidden), "workArea": json(work), "scale": 1,
+            "space": "logical", "kind": bounds == nil ? "cursor" : "selection", "visible": isVisible]
+}
+
+/// Configure only our own result window. Floating above ordinary windows is
+/// insufficient in another app's full-screen Space or Stage Manager set;
+/// these public collection behaviors let the popover accompany its source.
+private func configurePopover() throws {
+    guard let window = NSApp.windows.first(where: { $0.title == "TranslateMe · 译文" }) else {
+        throw NativeError.message("译文浮窗尚未创建。")
+    }
+    var behavior = window.collectionBehavior
+    behavior.remove([.fullScreenPrimary, .fullScreenNone])
+    behavior.formUnion([.canJoinAllSpaces, .fullScreenAuxiliary])
+    if #available(macOS 13.0, *) {
+        behavior.remove([.primary, .auxiliary])
+        behavior.insert(.canJoinAllApplications)
+    }
+    window.collectionBehavior = behavior
+    window.hidesOnDeactivate = false
+}
+
 /// A selection peek never creates a writable ticket. Explicit write shortcuts
 /// capture identity, original value and UTF-16 range for compare-before-replace.
 private func capture(_ request: [String: Any]) throws -> [String: Any] {
@@ -83,6 +171,10 @@ private func capture(_ request: [String: Any]) throws -> [String: Any] {
     guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw NativeError.message("没有选中文字；写入翻译需要将光标放在可编辑的输入框。") }
     guard text.utf16.count <= 16000 else { throw NativeError.message("本次文字超过 16,000 字符，请分段翻译。") }
     var result: [String: Any] = ["text": text, "app": app.localizedName ?? "App", "pid": app.processIdentifier, "editable": editable, "whole": whole]
+    if let range = rangeAttribute(element) {
+        result["selectionId"] = "\(CFHash(element)):\(range.location):\(range.length)"
+    }
+    if request["geometry"] as? Bool == true { result["anchor"] = selectionAnchor(element) }
     if request["ticket"] as? Bool == true {
         snapshots = snapshots.filter { Date().timeIntervalSince($0.value.created) < 120 }
         if snapshots.count >= 16 { snapshots.removeAll() }
@@ -285,6 +377,9 @@ public func nativeRequest(_ json: UnsafePointer<CChar>, _ reply: @escaping @conv
         do {
             guard let request = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw NativeError.message("无效的原生请求。") }
             switch request["op"] as? String {
+            case "configurePopover":
+                try configurePopover()
+                respond(["ok": true], reply, context)
             case "status":
                 var translation = false
                 #if canImport(Translation)
@@ -296,6 +391,10 @@ public func nativeRequest(_ json: UnsafePointer<CChar>, _ reply: @escaping @conv
                 let trusted = AXIsProcessTrustedWithOptions(options)
                 if !trusted, let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") { NSWorkspace.shared.open(url) }
                 respond(["accessibility": trusted], reply, context)
+            case "selection" where NSWorkspace.shared.frontmostApplication?.processIdentifier == getpid():
+                // Clicking or dragging our own popover must not dismiss it as a
+                // lost source selection. No other application's text is read.
+                respond(["self": true], reply, context)
             case "capture", "selection": respond(try capture(request), reply, context)
             case "replace": try replace(request, reply, context)
             case "copy":
