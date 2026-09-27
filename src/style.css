@@ -299,8 +299,8 @@ h2 {
   flex: 1;
   min-width: 0;
 }
-.field input,
-.field select {
+.field > input,
+.field > select {
   background: #fafcfb;
   border: 1px solid #dfe8e2;
   border-radius: 6px;
@@ -308,6 +308,16 @@ h2 {
   color: #435f4e;
   width: 100%;
   font-size: 11px;
+}
+/* WebKit's native popup can ignore padding and stay shorter than its adjacent
+   switch. Give both controls the same box; keep checkbox styling independent. */
+.field > select {
+  appearance: none;
+  height: 36px;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 4.5 3 3 3-3' fill='none' stroke='%2368816f' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
 }
 .field input::placeholder {
   color: #a7b3ac;
@@ -323,7 +333,7 @@ h2 {
   line-height: 1.7;
 }
 .switch-row {
-  height: 35px;
+  height: 36px;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -332,6 +342,11 @@ h2 {
 .checkbox-row input {
   accent-color: var(--accent);
   width: 14px;
+}
+.switch-row input {
+  height: 14px;
+  margin: 0;
+  flex-shrink: 0;
 }
 .switch-row span {
   font-size: 11px;
