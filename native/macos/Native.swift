@@ -602,6 +602,84 @@ private func configureMainWindowAppearance() {
     }
 }
 
+/// A result window temporarily becomes key when its close/copy controls are
+/// clicked. AppKit otherwise hands that focus to Nobody's main window on hide.
+/// Keep only the previous foreground app in memory and return to it after the
+/// result actually hides. Never open/hide the main window or override a user's
+/// intervening switch to another application. All callbacks run on the main queue.
+private final class PopoverFocusReturn {
+    private weak var window: NSWindow?
+    private var previousApplication: NSRunningApplication?
+    private var workspaceObserver: NSObjectProtocol?
+    private var windowObservers: [NSObjectProtocol] = []
+    private var pending = false
+    private var wasVisible = false
+
+    /// Installed once on the existing result window; notifications replace any
+    /// focus polling, global input hooks, or additional accessibility reads.
+    init(window: NSWindow) {
+        self.window = window
+        self.wasVisible = window.isVisible
+        remember(NSWorkspace.shared.frontmostApplication)
+        workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            self?.remember(notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)
+        }
+        windowObservers.append(NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main
+        ) { [weak self] _ in
+            self?.remember(NSWorkspace.shared.frontmostApplication)
+        })
+        windowObservers.append(NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: window, queue: .main
+        ) { [weak self] _ in self?.restoreAfterHide() })
+        windowObservers.append(NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main
+        ) { [weak self] _ in
+            guard let self, let window = self.window else { return }
+            let hidden = self.wasVisible && !window.isVisible
+            self.wasVisible = window.isVisible
+            if hidden { self.restoreAfterHide() }
+        })
+    }
+
+    /// Track only activatable external apps, never Nobody or transient agents.
+    /// A running-app object preserves identity even if its PID is later reused.
+    private func remember(_ app: NSRunningApplication?) {
+        if let app, app.processIdentifier != getpid(), app.activationPolicy == .regular {
+            previousApplication = app
+        }
+    }
+
+    /// Resign-key can arrive before orderOut finishes. Defer one main-queue turn
+    /// and recheck visibility/focus to avoid returning focus while copying text,
+    /// clicking our main window, or switching apps during an asynchronous hide.
+    private func restoreAfterHide() {
+        guard !pending else { return }
+        pending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pending = false
+            guard let window = self.window, !window.isVisible,
+                  NSApp.isActive,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == getpid(),
+                  let previous = self.previousApplication, !previous.isTerminated else { return }
+            // Cooperative activation on modern macOS makes this an explicit
+            // hand-back, not an application demanding focus over a third app.
+            if #available(macOS 14.0, *) { NSApp.yieldActivation(to: previous) }
+            let restored = previous.activate(options: [])
+            Logger(subsystem: "app.translateme.desktop", category: "popover-focus").debug("hidden=true returned=\(restored)")
+        }
+    }
+
+    deinit {
+        if let workspaceObserver { NSWorkspace.shared.notificationCenter.removeObserver(workspaceObserver) }
+        for observer in windowObservers { NotificationCenter.default.removeObserver(observer) }
+    }
+}
+private var popoverFocusReturn: PopoverFocusReturn?
+
 /// Configure only our own result window. Floating above ordinary windows is
 /// insufficient in another app's full-screen Space or Stage Manager set;
 /// these public collection behaviors let the popover accompany its source.
@@ -618,6 +696,7 @@ private func configurePopover() throws {
     }
     window.collectionBehavior = behavior
     window.hidesOnDeactivate = false
+    if popoverFocusReturn == nil { popoverFocusReturn = PopoverFocusReturn(window: window) }
 }
 
 /// A selection peek never creates a writable ticket. Explicit write shortcuts
