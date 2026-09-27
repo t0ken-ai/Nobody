@@ -404,6 +404,32 @@ private func selectionAnchor(_ element: AXUIElement) -> [String: Any]? {
             "space": "logical", "kind": bounds == nil ? "cursor" : "selection", "visible": isVisible]
 }
 
+/// The WebView's CSS cannot color the native titlebar. Use the header's
+/// composited light/dark palette for the window backing, with AppKit resolving
+/// a dynamic color on appearance changes. Keep the native title/buttons and
+/// content geometry; no full-size overlay, polling or theme IPC is needed.
+private func configureMainWindowAppearance() {
+    guard let window = NSApp.windows.first(where: { $0.title == "TranslateMe" }) else { return }
+    // Tauri's default Visible style still sets fullSizeContentView. Remove it
+    // before making the bar transparent, or the WebView moves behind the
+    // traffic lights and the logo overlaps them (notably on recent macOS).
+    let frame = window.frame
+    window.styleMask.remove(.fullSizeContentView)
+    window.titlebarAppearsTransparent = true
+    // Changing this mask can grow the outer frame by the titlebar height.
+    // Keep the existing window size/position and let its content resize inside.
+    window.setFrame(frame, display: false)
+    window.titlebarSeparatorStyle = .none
+    window.backgroundColor = NSColor(name: "TranslateMeWindowBackground") { appearance in
+        // Match Aqua/Dark Aqua rather than reading a cached system preference,
+        // so automatic theme changes and increased-contrast variants still work.
+        let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return dark
+            ? NSColor(srgbRed: 28.0 / 255, green: 39.0 / 255, blue: 31.0 / 255, alpha: 1)
+            : NSColor(srgbRed: 248.0 / 255, green: 250.0 / 255, blue: 247.0 / 255, alpha: 1)
+    }
+}
+
 /// Configure only our own result window. Floating above ordinary windows is
 /// insufficient in another app's full-screen Space or Stage Manager set;
 /// these public collection behaviors let the popover accompany its source.
@@ -696,6 +722,9 @@ public func nativeRequest(_ json: UnsafePointer<CChar>, _ reply: @escaping @conv
                 try validateApplications(request["apps"] as? [Any] ?? [])
                 respond(["ok": true], reply, context)
             case "configurePopover":
+                // Both windows already exist at this one-time startup call.
+                // The main titlebar is styled independently of the popover.
+                configureMainWindowAppearance()
                 try configurePopover()
                 respond(["ok": true], reply, context)
             case "status":

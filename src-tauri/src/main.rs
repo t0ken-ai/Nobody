@@ -622,8 +622,8 @@ fn main() {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     let state = handle.state::<AppState>();
-                    // The adapter configures only the already-created result
-                    // window. Complete this before observing other applications.
+                    // Style our main titlebar and configure the already-created
+                    // result window before observing other applications.
                     if let Err(error) = state.platform.call(json!({"op":"configurePopover"})).await
                     {
                         report_error(&handle, error, false);
