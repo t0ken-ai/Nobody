@@ -128,6 +128,7 @@ Windows 产物为 `Nobody-<版本>-Windows-x64-setup.exe`、`.sig`、`.sha256` �
 | `src-tauri/src/translation.rs`、`document.rs` | 引擎请求、输出校验和技术文本保护 |
 | `src-tauri/src/config.rs`、`llm_store.rs`、`private_files.rs` | 配置、本地加密存储与文件权限 |
 | `src-tauri/src/updater.rs`、`src/updates.ts` | 更新检查、提醒、下载和验签；协调器提供安装前的空闲锁 |
+| `src-tauri/src/desktop.rs`、`src/desktop.ts` | 关于信息与登录时启动；开关以系统实际注册状态为准，默认不注册；`--background` 只控制窗口初始显示 |
 | `src-tauri/src/transfer/` | 独立的局域网发现、TLS 身份、信任、传输和记录 |
 | `src-tauri/src/platform/`、`native/macos/` | 系统取词、回填、应用身份、图标及原生翻译适配 |
 | `src-tauri/prompts/developer-translator.txt` | 默认的可编辑翻译角色与规则 |

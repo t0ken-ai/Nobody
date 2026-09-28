@@ -3,6 +3,7 @@
 //! engine modules never call each other or reach into the UI.
 mod config;
 mod document;
+mod desktop;
 mod llm_store;
 mod platform;
 mod popover;
@@ -40,6 +41,7 @@ struct AppState {
     // Keep an early tray click until the main webview has installed its listener.
     // Repeated clicks coalesce into one navigation; this is never persisted.
     transfer_menu_pending: AtomicBool,
+    about_menu_pending: AtomicBool,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -85,6 +87,13 @@ async fn get_settings(state: tauri::State<'_, AppState>) -> Result<Value, String
 #[tauri::command]
 fn take_transfer_menu_request(window: tauri::WebviewWindow, state: tauri::State<'_, AppState>) -> bool {
     window.label() == "main" && state.transfer_menu_pending.swap(false, Ordering::SeqCst)
+}
+
+/// Tray clicks may arrive before the About dialog is mounted; consume once
+/// from the main webview instead of relying solely on an early event.
+#[tauri::command]
+fn take_about_menu_request(window: tauri::WebviewWindow, state: tauri::State<'_, AppState>) -> bool {
+    window.label() == "main" && state.about_menu_pending.swap(false, Ordering::SeqCst)
 }
 
 /// Restore the resident window without reloading its drafts. Explicit visibility
@@ -628,6 +637,9 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // Registration is opt-in. The launch argument controls presentation,
+        // never preferences, permissions or startup registration itself.
+        .plugin(tauri_plugin_autostart::Builder::new().app_name("app.translateme.desktop").arg("--background").build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -672,6 +684,7 @@ fn main() {
                 last: Mutex::new(None),
                 popover: Mutex::new(popover::Popover::default()),
                 transfer_menu_pending: AtomicBool::new(false),
+                about_menu_pending: AtomicBool::new(false),
             });
             let (write, read) = parse_shortcuts(&settings).map_err(std::io::Error::other)?;
             app.global_shortcut().register_multiple([write, read])?;
@@ -691,7 +704,8 @@ fn main() {
             )?;
             let quit = tauri::menu::MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let check_update = tauri::menu::MenuItem::with_id(app, "check-update", "检查更新…", true, None::<&str>)?;
-            let menu = tauri::menu::Menu::with_items(app, &[&open, &open_transfer, &check_update, &quit])?;
+            let about = tauri::menu::MenuItem::with_id(app, "about", "关于 Nobody", true, None::<&str>)?;
+            let menu = tauri::menu::Menu::with_items(app, &[&open, &open_transfer, &check_update, &about, &quit])?;
             let tray = tauri::tray::TrayIconBuilder::with_id("main-tray");
             // macOS tints this alpha-only B mark for light/dark menu bars.
             // Its wider head gap is intentional at status-item size. Windows
@@ -719,6 +733,13 @@ fn main() {
                         show_main_window(app);
                     }
                     "quit" => app.exit(0),
+                    "about" => {
+                        app.state::<AppState>().about_menu_pending.store(true, Ordering::SeqCst);
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.emit("open-about", ());
+                        }
+                        show_main_window(app);
+                    }
                     "check-update" => {
                         show_main_window(app);
                         let handle = app.clone();
@@ -746,6 +767,11 @@ fn main() {
             // LAN state and failures stay separate from translation state.
             transfer::commands::install(app.handle());
             updater::install(app.handle(), prepare_update_install);
+            // The main window starts hidden in config to avoid a login-time
+            // flash. Normal launches still show it after services are ready.
+            if !std::env::args().any(|arg| arg == "--background") {
+                show_main_window(app.handle());
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -788,6 +814,10 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             take_transfer_menu_request,
+            take_about_menu_request,
+            desktop::get_desktop_status,
+            desktop::set_launch_on_login,
+            desktop::open_about_link,
             save_settings,
             test_llm_connection,
             pick_applications,
@@ -822,6 +852,10 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("Nobody could not start")
         .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Reopen { .. }) {
+                show_main_window(app);
+            }
             if matches!(event, tauri::RunEvent::Exit) {
                 transfer::commands::shutdown(app);
             }

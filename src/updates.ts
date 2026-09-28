@@ -79,7 +79,7 @@ export function mountUpdates(container: HTMLElement) {
     if (latest && state.revision < latest.revision) return;
     latest = state;
     container.querySelector(".update-current")!.textContent = `当前版本 ${state.currentVersion}`;
-    document.querySelectorAll(".app-version").forEach(node => { node.textContent = `Nobody ${state.currentVersion}`; });
+    document.querySelectorAll(".app-version").forEach(node => { node.textContent = `Nobody ${state.currentVersion} · 关于`; });
     automatic.checked = state.automatic;
     const active = ["checking", "downloading", "installing"].includes(state.phase);
     checkButton.disabled = active;

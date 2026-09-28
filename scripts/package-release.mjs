@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { basename, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { packageDmg } from './package-dmg.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 if (process.platform !== 'darwin' || process.arch !== 'arm64') {
@@ -39,15 +40,14 @@ symlinkSync('/Applications', join(staging, 'Applications'));
 const zip = join(output, `${name}.zip`);
 const dmg = join(output, `${name}.dmg`);
 run('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', app, zip]);
-run('hdiutil', ['create', '-volname', productName, '-srcfolder', staging, '-ov', '-format', 'UDZO', dmg]);
-run('hdiutil', ['verify', dmg]);
+const iconDmgZip = packageDmg({ staging, dmg, productName, icon: join(root, 'src-tauri/icons/icon.icns') });
 run('unzip', ['-tq', zip]);
 run(process.execPath, ['scripts/prepare-updater.mjs']);
 run(process.execPath, ['scripts/test-updater.mjs', '--release']);
 
 // Stream hashes so packaging memory does not grow with the bundle size.
 const sums = [];
-for (const path of [dmg, zip, join(output, `${name}.app.tar.gz`), join(output, `${name}.app.tar.gz.sig`), join(output, 'manifest-darwin-aarch64.json')]) {
+for (const path of [dmg, iconDmgZip, zip, join(output, `${name}.app.tar.gz`), join(output, `${name}.app.tar.gz.sig`), join(output, 'manifest-darwin-aarch64.json')]) {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(path)) hash.update(chunk);
   sums.push(`${hash.digest('hex')}  ${basename(path)}`);

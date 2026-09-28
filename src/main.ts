@@ -6,6 +6,7 @@ import { demoMarkup, mountDemos } from "./demos";
 import { desktopPlatform, mountShortcutRecorder } from "./shortcuts";
 import { transferMarkup, mountTransfer } from "./transfer";
 import { mountUpdates } from "./updates";
+import { mountDesktop } from "./desktop";
 
 // Vite packages this small raster locally; no external image request or
 // full-resolution design board is loaded into the resident webview.
@@ -199,11 +200,13 @@ if (popup) {
               <div class="llm-test-row"><button id="test-llm" class="button small" type="button">测试连接</button><span id="llm-test-status" role="status">用当前配置翻译固定测试句，无需先保存。</span></div><div id="llm-test-preview" class="llm-test-preview" hidden></div>
             </div></div>
             <div class="setting-card"><h2>阅读与快捷键</h2><div class="field-row"><label class="field">阅读目标语言<select id="reading-language">${languageOptions}</select></label><label class="field">划词自动翻译<span class="switch-row"><input id="auto-selection" type="checkbox" /><span>仅在白名单应用中触发</span></span></label></div><div class="allowlist-field"><div class="allowlist-heading"><span>自动划词 · 应用白名单</span><button id="add-application" class="button small" type="button">＋ 添加本机应用</button></div><ul id="application-list" aria-label="自动划词应用白名单"></ul><div class="allowlist-footer"><span>默认：ChatGPT Desktop、Claude Desktop</span><button id="reset-applications" class="text-button" type="button">恢复默认</button></div><p class="field-help">只在列表中应用的阅读正文里自动翻译；输入框、保存／打开文件对话框忽略。手动快捷键不受白名单限制。修改后请保存设置。</p></div><div class="field-row"><div class="field"><span>写入英文快捷键</span><button type="button" class="shortcut-recorder" id="write-key-recorder" aria-label="写入英文快捷键"></button><input type="hidden" id="write-key" value="CommandOrControl+Shift+E" /></div><div class="field"><span>阅读翻译快捷键</span><button type="button" class="shortcut-recorder" id="read-key-recorder" aria-label="阅读翻译快捷键"></button><input type="hidden" id="read-key" value="CommandOrControl+Shift+D" /></div></div><p class="field-help">点击按键图标后录入新组合键，Esc 取消。翻译只负责回填，不会替你按发送；输入变化时保留译文供复制。</p></div>
-            <div class="action-row"><span class="privacy-note">不保存翻译历史</span><button class="button primary" type="submit" id="save">保存设置 ${icon("check")}</button></div>
+            <div class="action-row settings-actions"><span class="privacy-note">翻译设置修改后保存 · 不保存翻译历史</span><button class="button primary" type="submit" id="save">保存设置 ${icon("check")}</button></div>
           </form>
+          <div id="desktop-settings" class="setting-card"></div>
           <div id="update-settings" class="setting-card"></div>
+          <p class="field-help permission-update-note">macOS 当前使用临时签名，更新后可能需要重新开启辅助功能；翻译设置和本地数据会保留。</p>
         </section>
-        <div id="permission-banner" class="permission-banner"><span class="connection-dot" aria-hidden="true"></span><div><strong id="permission-title">正在检查系统连接…</strong><p id="permission-description">跨应用取词需要辅助功能权限。</p></div><button id="permission" class="button small">开启辅助功能</button><span class="app-version">Nobody 0.1</span></div>
+        <div id="permission-banner" class="permission-banner"><span class="connection-dot" aria-hidden="true"></span><div><strong id="permission-title">正在检查系统连接…</strong><p id="permission-description">跨应用取词需要辅助功能权限。</p></div><button id="permission" class="button small">开启辅助功能</button><button type="button" id="about-nobody" class="app-version" aria-label="关于 Nobody">关于 Nobody</button></div>
         <div id="notice" class="notice" role="status" hidden></div>
       </div>
     </main>`;
@@ -221,6 +224,8 @@ if (popup) {
     transfer?.setVisible(visible && activeView === "transfer");
   }
   setMainVisible = visible => { mainVisible = visible; updateVisibility(); };
+  mountDesktop($("desktop-settings"), $<HTMLButtonElement>("about-nobody"), setMainVisible);
+  document.querySelector<HTMLElement>(".permission-update-note")!.hidden = desktopPlatform() !== "macOS";
   document.addEventListener("visibilitychange", updateVisibility);
   /** Keep each view mounted so navigation preserves draft text and unsaved
    * settings. Only the visible tutorial may consume animation frames. */

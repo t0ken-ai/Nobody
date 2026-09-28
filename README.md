@@ -28,7 +28,8 @@ Translation and local-network sharing for developers.
 - **两种翻译引擎**：macOS 系统翻译，或兼容 Chat Completions 的自定义 LLM。支持编辑翻译角色与规则、测试连接和 Markdown 展示。
 - **局域网互传**：自动发现在线设备，首次双方确认信任，之后加密直传文字和多个文件，无云端中转。
 - **自动更新**：启动后及每 6 小时检查 GitHub 正式版本，显示更新摘要；支持稍后提醒、跳过版本，点击后下载、验签、安装并重启。当前自动安装支持 macOS Apple 芯片和 Windows x64。
-- **后台常驻**：关闭主窗口后仍可翻译和接收文件，通过菜单栏或系统托盘打开界面、进入互传或退出。
+- **后台常驻**：关闭主窗口后仍可翻译和接收文件，通过菜单栏或系统托盘打开界面、进入互传或退出。可在偏好设置开启「登录时启动」，默认关闭，开启后在后台启动。
+- **关于 Nobody**：在窗口底部或菜单中查看实际安装版本、GitHub 项目及作者联系方式。
 
 ## 平台支持
 
@@ -46,7 +47,7 @@ macOS 应用最低版本声明为 13.0；13/14 需要使用 LLM，旧系统及 I
 
 ### 安装
 
-macOS 安装包为 `Nobody-<版本>-macOS-arm64.dmg`，仅适用于 Apple 芯片。打开后将 Nobody 拖入「应用程序」，升级前先退出旧版本。也可使用 ZIP 中的应用。
+macOS 安装包为 `Nobody-<版本>-macOS-arm64.dmg`，仅适用于 Apple 芯片。打开后将 Nobody 拖入「应用程序」，升级前先退出旧版本。希望下载后保留 DMG 文件的 Nobody 图标，可下载 `.dmg.zip` 并用 macOS 解压；也可使用普通 `.zip` 中的应用。
 
 Windows 安装包为 `Nobody-<版本>-Windows-x64-setup.exe`，默认安装到当前用户目录，使用自定义 LLM 翻译。详见 [Windows 安装说明](docs/release-windows.md)。
 
@@ -104,4 +105,4 @@ npm run bundle -- --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
 欢迎提交可复现的 Bug、兼容性反馈和 Pull Request。提交前请阅读 [贡献指南](CONTRIBUTING.md)，特别是 Windows 实机验证和代码混排翻译的边界。
 
-项目采用 [MIT License](LICENSE)。
+项目采用 [MIT License](LICENSE)。联系作者：[spridu@gmail.com](mailto:spridu@gmail.com)。
