@@ -47,7 +47,8 @@ jobs:
       # Main and its later release tag share the exact source commit. Older
       # same-lockfile builds can seed Cargo's dependency cache; Cargo still
       # checks source fingerprints. Never cache signing keys or user directories.
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: cargo-cache
         with:
           path: |
             ~/.cargo/registry
@@ -62,7 +63,7 @@ jobs:
       - run: npm ci
       - name: Check frontend and release metadata
         run: |
-          npm run check
+          npm run build
           node --test scripts/test-release-metadata.mjs
       - name: Check native translation rules
         if: runner.os == 'macOS'
@@ -113,6 +114,17 @@ jobs:
           Sign in to download this test artifact; retained for 30 days.
           Official version tags publish both platforms together in Releases.
           EOF_SUMMARY
+      # Keep compiled dependencies even when a later test fails. Release-mode
+      # tests embed dist/, so the frontend build above must precede Cargo tests.
+      - name: Save Cargo compilation cache
+        if: always() && !cancelled() && steps.cargo-cache.outputs.cache-hit != 'true' && steps.version.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   windows-install-test:
     # Keep install failures separate from compilation so reruns can reuse the
