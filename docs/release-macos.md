@@ -18,6 +18,8 @@ Nobody 为开发者提供快捷键翻译、划词阅读和局域网文字／文�
 2. 升级前从菜单栏退出旧版 Nobody / TranslateMe，避免两个实例争用快捷键和互传端口。
 3. 打开 DMG，将 Nobody 拖到「应用程序」后启动。
 
+请从「应用程序」启动，不要直接在 DMG 窗口里双击运行后更新。DMG 是只读安装磁盘，更新器无法替换其中的应用。若旧版提示 `Read-only file system (os error 30)`，先退出 Nobody，将应用拖入「应用程序」，再从那里重新打开并检查更新；已有设置保留，不需要删除数据目录。
+
 运行应用不需要 Node.js、Rust、Xcode 或另行安装 SQLCipher。应用最低系统版本声明为 macOS 13.0，Apple 系统翻译需要 macOS 15+；较旧系统需配置 LLM。macOS 13/14 和 Intel Mac 尚未完成实机验证。
 
 当前构建采用 ad-hoc 签名，尚未 Developer ID 签名或 Apple 公证。首次打开可能被 macOS 阻止，请在确认来源后自行按系统提示处理，不要关闭系统安全保护。

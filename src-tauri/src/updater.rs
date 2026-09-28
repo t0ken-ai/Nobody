@@ -107,6 +107,70 @@ fn trusted_download(url: &url::Url, version: &str) -> bool {
             .starts_with(&format!("/t0ken-ai/Nobody/releases/download/v{version}/"))
 }
 
+#[cfg(target_os = "macos")]
+const READ_ONLY_INSTALL_HELP: &str = "无法在只读位置安装更新。请退出 Nobody，将安装磁盘中的 Nobody.app 拖到“应用程序”，再从“应用程序”打开并检查更新。若已经安装，请检查应用所在磁盘是否只读。";
+
+/// App Translocation is a temporary macOS mount, not the original installation.
+/// Probe only the containing directory with a disposable empty file: Unix mode
+/// bits alone cannot detect a read-only DMG. Do not reject writable /Volumes
+/// paths by name, or block the updater's existing administrator authorization.
+#[cfg(target_os = "macos")]
+fn check_macos_update_location(executable: &std::path::Path) -> Result<(), String> {
+    if executable
+        .components()
+        .any(|part| part.as_os_str() == "AppTranslocation")
+    {
+        return Err("Nobody 当前运行在 macOS 临时转移目录，不能原地更新。请退出应用，将 Nobody.app 拖到“应用程序”，再从“应用程序”重新打开。".into());
+    }
+    let bundle = tauri_plugin_updater::extract_path_from_executable(executable)
+        .map_err(|e| format!("无法确认应用安装位置：{e}"))?;
+    let parent = bundle.parent().ok_or("无法确认应用安装目录。")?;
+    match tempfile::Builder::new()
+        .prefix(".nobody-update-check-")
+        .tempfile_in(parent)
+    {
+        Ok(probe) => probe.close().map_err(|e| format!("无法清理更新目录检查文件：{e}")),
+        // tempfile preserves ErrorKind but wraps the OS error with its path,
+        // so raw_os_error() is None even for EROFS on an actual mounted DMG.
+        Err(error) if error.kind() == std::io::ErrorKind::ReadOnlyFilesystem => {
+            Err(READ_ONLY_INSTALL_HELP.into())
+        }
+        // Tauri may request administrator approval for a protected, writable
+        // /Applications directory. Preserve that existing supported path.
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
+        Err(error) => Err(format!("无法检查应用安装目录：{error}")),
+    }
+}
+
+/// Check only when the user starts installation, on a blocking worker. The
+/// ordinary background version check remains read-only and creates no files.
+async fn check_install_location() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        tokio::task::spawn_blocking(|| {
+            let executable = std::env::current_exe()
+                .map_err(|e| format!("无法确认当前应用位置：{e}"))?;
+            check_macos_update_location(&executable)
+        })
+        .await
+        .map_err(|e| format!("更新位置检查未完成：{e}"))?
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(())
+    }
+}
+
+/// A volume can become read-only after the preflight/download. Retain a useful
+/// recovery message for the installer's actual I/O error as well as early checks.
+fn install_failure_message(error: &tauri_plugin_updater::Error) -> String {
+    #[cfg(target_os = "macos")]
+    if matches!(error, tauri_plugin_updater::Error::Io(e) if e.kind() == std::io::ErrorKind::ReadOnlyFilesystem) {
+        return READ_ONLY_INSTALL_HELP.into();
+    }
+    format!("安装未完成，请稍后重试：{error}")
+}
+
 /// Atomic replacement avoids losing skip/notification choices if the process
 /// exits while writing. Corrupt pre-existing state is never silently replaced.
 fn persist(state: &UpdateState, p: &Preferences) -> Result<(), String> {
@@ -402,8 +466,9 @@ pub fn set_automatic_updates(
     Ok(())
 }
 
-/// Download first so normal work can continue. The signed bytes are verified
-/// by Tauri before acquiring the coordinator's idle lease and installing them.
+/// Check the install location before downloading so a DMG launch cannot waste
+/// a download and then suggest retrying an immutable volume. Tauri verifies the
+/// signed bytes before acquiring the coordinator's idle lease and installing them.
 /// Errors release that lease; installation failures are surfaced for retry.
 #[tauri::command]
 pub async fn install_update(
@@ -428,6 +493,9 @@ pub async fn install_update(
         .clone()
         .filter(|u| u.version == version)
         .ok_or("请先检查并选择可用的新版本。")?;
+    if let Err(error) = check_install_location().await {
+        return fail(&app, error);
+    }
     change(&app, |i| {
         i.snapshot.phase = "downloading".into();
         i.snapshot.prompt = true;
@@ -470,7 +538,7 @@ pub async fn install_update(
         Ok((Ok(()), _lease)) => {
             app.restart();
         }
-        Ok((Err(e), _lease)) => fail(&app, format!("安装未完成，请稍后重试：{e}")),
+        Ok((Err(e), _lease)) => fail(&app, install_failure_message(&e)),
         Err(e) => fail(&app, format!("安装任务未完成：{e}")),
     }
 }
@@ -478,6 +546,45 @@ pub async fn install_update(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Cover temporary launch paths and writable installs without touching a
+    /// real app; a successful preflight must leave no files or bundle changes.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn update_location_handles_translocation_and_preserves_installed_bundle() {
+        let translocated = std::path::Path::new("/private/var/folders/test/AppTranslocation/random/d/Nobody.app/Contents/MacOS/nobody");
+        assert!(check_macos_update_location(translocated).unwrap_err().contains("临时转移目录"));
+        let fixture = tempfile::tempdir().unwrap();
+        let executable = fixture.path().join("Nobody.app/Contents/MacOS/nobody");
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::fs::write(&executable, "existing application").unwrap();
+        check_macos_update_location(&executable).unwrap();
+        assert_eq!(std::fs::read_to_string(executable).unwrap(), "existing application");
+        assert_eq!(std::fs::read_dir(fixture.path()).unwrap().count(), 1, "preflight must remove its own probe");
+        let readonly = tauri_plugin_updater::Error::Io(std::io::Error::from_raw_os_error(30));
+        let message = install_failure_message(&readonly);
+        assert!(message.contains("只读") && message.contains("应用程序"));
+        assert!(!message.contains("稍后重试"));
+        // Filesystem helpers can retain ErrorKind while losing the raw errno.
+        let wrapped = tauri_plugin_updater::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::ReadOnlyFilesystem,
+            "wrapped filesystem failure",
+        ));
+        assert_eq!(install_failure_message(&wrapped), READ_ONLY_INSTALL_HELP);
+    }
+
+    /// Invoked only with an explicitly supplied disposable read-only DMG mount;
+    /// this exercises EROFS from the OS without changing any application files.
+    #[test]
+    #[cfg(target_os = "macos")]
+    #[ignore = "requires NOBODY_READ_ONLY_UPDATE_FIXTURE disposable mounted DMG"]
+    fn read_only_dmg_is_rejected_before_download() {
+        let root = PathBuf::from(std::env::var_os("NOBODY_READ_ONLY_UPDATE_FIXTURE").expect("fixture mount required"));
+        assert!(root.join("nobody-readonly-fixture.txt").is_file(), "fixture marker required");
+        let executable = root.join("Nobody.app/Contents/MacOS/nobody");
+        assert_eq!(check_macos_update_location(&executable).unwrap_err(), READ_ONLY_INSTALL_HELP);
+        assert_eq!(std::fs::read_to_string(&executable).unwrap(), "existing application");
+    }
     #[test]
     fn stable_versions_use_semver_and_never_downgrade() {
         let v = |s| Version::parse(s).unwrap();
