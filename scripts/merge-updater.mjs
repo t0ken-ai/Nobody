@@ -40,7 +40,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const root = fileURLToPath(new URL('../', import.meta.url));
   const directory = resolve(process.argv[2] ?? join(root, 'artifacts/releases'));
   const { version } = JSON.parse(readFileSync(join(root, 'src-tauri/tauri.conf.json'), 'utf8'));
-  const notes = readFileSync(join(root, 'docs/releases', `v${version}.md`), 'utf8').trim();
+  // Normalize checkout line endings so Windows and macOS produce identical notes.
+  const notes = readFileSync(join(root, 'docs/releases', `v${version}.md`), 'utf8').replace(/\r\n/g, '\n').trim();
   const merged = await mergeUpdates(directory, version, notes);
   const latest = `${JSON.stringify(merged, null, 2)}\n`;
   writeFileSync(join(directory, 'latest.json'), latest);

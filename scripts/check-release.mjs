@@ -4,7 +4,8 @@ import { appendFileSync, readFileSync } from 'node:fs';
 const read = path => JSON.parse(readFileSync(path, 'utf8'));
 const { version } = read('src-tauri/tauri.conf.json');
 const cargo = readFileSync('src-tauri/Cargo.toml', 'utf8').match(/\[package\][\s\S]*?\nversion = "([^"]+)"/);
-const locked = readFileSync('src-tauri/Cargo.lock', 'utf8').match(/\[\[package\]\]\nname = "nobody"\nversion = "([^"]+)"/);
+// Git on Windows may materialize CRLF; version checks must accept both checkouts.
+const locked = readFileSync('src-tauri/Cargo.lock', 'utf8').replace(/\r\n/g, '\n').match(/\[\[package\]\]\nname = "nobody"\nversion = "([^"]+)"/);
 if (!/^\d+\.\d+\.\d+$/.test(version) || [read('package.json').version, read('package-lock.json').packages[''].version, cargo?.[1], locked?.[1]].some(v => v !== version)) {
   throw new Error('App, npm and Rust versions must agree before signing.');
 }

@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const { productName, version } = JSON.parse(readFileSync(join(root, 'src-tauri/tauri.conf.json'), 'utf8'));
 if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Only stable SemVer releases belong in the update feed.');
-const notes = readFileSync(join(root, 'docs/releases', `v${version}.md`), 'utf8').trim();
+// Normalize checkout line endings so Windows and macOS produce identical notes.
+const notes = readFileSync(join(root, 'docs/releases', `v${version}.md`), 'utf8').replace(/\r\n/g, '\n').trim();
 if (!notes || notes.length > 24000) throw new Error('Release notes must contain 1–24,000 characters.');
 const mac = process.platform === 'darwin' && process.arch === 'arm64';
 const win = process.platform === 'win32' && process.arch === 'x64';
