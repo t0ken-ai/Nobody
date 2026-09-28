@@ -4,6 +4,20 @@
 
 Nobody 为开发者提供快捷键翻译、划词阅读和局域网文字／文件互传。
 
+## 下载
+
+仓库提供 **Build macOS installers** 工作流，推送到 GitHub 后可自动构建 Apple 芯片 Mac 安装包：
+
+1. 登录 GitHub，打开 [Actions → Build macOS installers](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml)。
+2. 选择所需提交对应的成功运行，在页面摘要点击下载链接，或在 **Artifacts** 下载 `Nobody-<版本>-macOS-arm64`。
+3. 解压外层构建产物 ZIP，得到 DMG、应用 ZIP 和 SHA-256 校验清单，再按下文安装。
+
+每次 `main` 分支提交、推送匹配应用版本的 `v*` 标签，或点击 **Run workflow** 都会构建。Actions 产物保留 30 天，下载需要登录 GitHub；长期公开分发可将这三个文件上传到 GitHub Release。工作流只生成构建产物，不自动创建或发布 Release。
+
+仓库创建／推送后需等待首次运行成功，才会有可下载的包。尚无成功构建时，可按开发指南从源码打包。
+
+相关行为见 [GitHub 构建产物下载说明](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts)。
+
 ## 安装
 
 1. 使用 `Nobody-<版本>-macOS-arm64.dmg`，适用于 Apple 芯片 Mac；ZIP 包内提供相同应用。

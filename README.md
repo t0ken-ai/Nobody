@@ -10,6 +10,16 @@ Nobody 是面向开发者的桌面翻译与局域网互传工具。用母语写�
 
 Translation and local-network sharing for developers.
 
+**[⬇ 下载 macOS 安装包](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml) · [安装说明](docs/release-macos.md#下载)**
+
+[![macOS 安装包构建状态](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml/badge.svg?branch=main)](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml)
+
+在成功构建的 **Artifacts** 下载 DMG / ZIP（需登录 GitHub）。[自动构建说明](docs/development.md#github-actions-安装包)
+
+[![Nobody 操作演示：快捷键翻译输入、划词显示译文](docs/media/nobody-demo.gif)](docs/media/nobody-demo.mp4)
+
+[查看完整演示视频](docs/media/nobody-demo.mp4) · Apple 芯片 Mac · 系统翻译 / 自定义 LLM
+
 [使用指南](docs/usage.md) · [macOS 安装](docs/release-macos.md) · [开发指南](docs/development.md) · [参与贡献](CONTRIBUTING.md) · [MIT 许可证](LICENSE)
 
 ## 功能
@@ -39,7 +49,7 @@ macOS 应用最低版本声明为 13.0；13/14 需要使用 LLM，旧系统及 I
 
 macOS 安装包为 `Nobody-<版本>-macOS-arm64.dmg`，仅适用于 Apple 芯片。打开后将 Nobody 拖入「应用程序」，升级前先退出旧版本。也可使用 ZIP 中的应用。
 
-当前打包配置使用 ad-hoc 签名，尚未进行 Developer ID 签名与 Apple 公证。安装、权限及首次打开问题见 [macOS 安装说明](docs/release-macos.md)。仓库不包含构建产物；从源码构建见下文。
+仓库推送到 GitHub 后，`main` 分支提交、版本标签或手动运行均可触发安装包构建；在成功的 Actions 运行中下载 DMG、ZIP 和 SHA-256 清单。详见 [下载说明](docs/release-macos.md#下载)。当前使用 ad-hoc 签名，尚未进行 Developer ID 签名与 Apple 公证。
 
 ### 翻译
 

@@ -1,0 +1,94 @@
+name: Build macOS installers
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+# Build downloadable artifacts only. No release publishing or signing secrets
+# are needed; ordinary checks and pull requests stay in check.yml.
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-installers-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # macos-26 is Apple Silicon and includes the Translation-capable SDK.
+    # An explicit label avoids macos-latest changing architecture/SDK silently.
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Check platform and release version
+        id: version
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          if (process.platform !== 'darwin' || process.arch !== 'arm64') {
+            throw new Error('The packaging script requires an Apple Silicon Mac.');
+          }
+          const { version } = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8'));
+          // A tag must name the actual bundle version, not relabel an old app.
+          if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME !== `v${version}`) {
+            throw new Error(`Tag must match the app version: v${version}`);
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
+          JS
+          xcrun swiftc --version
+          xcrun --sdk macosx --show-sdk-version
+
+      - run: npm ci
+      - name: Check frontend and native translation rules
+        run: |
+          npm run check
+          node scripts/test-selection-layout.mjs
+          node scripts/test-translation-models.mjs
+
+      - name: Run Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+
+      # The local and CI packages share the same build/signature/archive checks.
+      # Never upload the raw .app tree: artifact archives may change file modes.
+      - name: Build and verify DMG and ZIP
+        run: node scripts/package-release.mjs
+
+      - name: Upload installers
+        id: installers
+        uses: actions/upload-artifact@v7
+        with:
+          name: Nobody-${{ steps.version.outputs.version }}-macOS-arm64
+          path: |
+            artifacts/releases/Nobody-*-macOS-arm64.dmg
+            artifacts/releases/Nobody-*-macOS-arm64.zip
+            artifacts/releases/Nobody-*-macOS-arm64.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Add download link to run summary
+        env:
+          INSTALLER_URL: ${{ steps.installers.outputs.artifact-url }}
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## macOS installers ready
+
+          [Download DMG, ZIP and SHA-256 checksums]($INSTALLER_URL)
+
+          Apple Silicon only. Ad-hoc signed; not Apple notarized.
+          Sign in to GitHub to download this artifact. Retained for 30 days.
+          EOF

@@ -86,6 +86,22 @@ node scripts/package-release.mjs
 
 当前 macOS 配置使用 ad-hoc 签名。正式分发的 Developer ID 签名与 Apple 公证需另行配置；Release 优化不代表已经公证。
 
+## GitHub Actions 安装包
+
+[Build macOS installers](../.github/workflows/macos-installers.yml) 独立于常规检查工作流，复用上述打包脚本。使用 GitHub 托管的 `macos-26` Apple Silicon 环境和其自带的 Xcode / Translation SDK，无需上传本地工具链或用户配置。
+
+| 触发方式 | 结果 |
+| --- | --- |
+| 推送到 `main` | 构建该提交的安装包，上传 Actions artifact |
+| 推送 `v<版本>` 标签 | 校验标签与 `src-tauri/tauri.conf.json` 版本一致后构建 |
+| Actions 页面点击 Run workflow | 构建选择的分支／标签 |
+
+工作流执行 TypeScript、Rust 测试和原生翻译规则检查，再构建并校验 DMG / ZIP。安装包和校验清单保留 30 天，成功运行的摘要提供下载链接。下载方式见 [安装说明](release-macos.md#下载)。
+
+此流程只有仓库读取权限，不需要额外配置 GitHub Token、API Key 或 Apple 签名密钥，也不会自动发布 Release。公开长期分发时，在所需版本对应的成功构建中取出 DMG、ZIP、SHA-256 三个文件，添加到该版本的 GitHub Release。
+
+提交工作流后必须在实际仓库检查首次运行结果；本地打包成功不代表 GitHub 环境已经验证。仓库如禁用 Actions，需先由维护者启用。Runner 规格见 [GitHub 官方说明](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)。
+
 ## 代码结构
 
 | 路径 | 职责 |
