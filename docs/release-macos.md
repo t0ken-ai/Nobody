@@ -8,7 +8,7 @@ Nobody 为开发者提供快捷键翻译、划词阅读和局域网文字／文�
 
 优先从 [GitHub Releases](https://github.com/t0ken-ai/Nobody/releases/latest) 下载 `Nobody-<版本>-macOS-arm64.dmg` 或 `.zip`。正式发布页同时提供每版更新摘要、SHA-256 校验清单和应用内更新所用的签名包，无需登录即可下载安装包。
 
-测试提交的构建产物仍位于 [Actions → Build macOS installers](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml)，保留 30 天，下载需登录 GitHub。推送匹配应用版本的 `v*` 标签会在构建成功后发布正式 Release；普通 `main` 提交只生成测试产物。
+测试提交的构建产物仍位于 [Actions → Build installers](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml)，保留 30 天，下载需登录 GitHub。推送匹配应用版本的 `v*` 标签会在构建成功后发布正式 Release；普通 `main` 提交只生成测试产物。
 
 ## 安装
 
@@ -28,7 +28,7 @@ Nobody 为开发者提供快捷键翻译、划词阅读和局域网文字／文�
 - 提醒显示新版本、发布日期和该版本 Release 的更新摘要，可稍后提醒或跳过此版本；手动检查仍能找到跳过的版本。
 - 点击「更新并重启」后下载并校验签名及版本，再安装。翻译或局域网任务未结束时暂缓安装，请完成任务后重试。
 - 网络或签名检查失败时不安装；没有对应平台安装包时不会改用其他平台文件。
-- 当前正式更新包仅支持 macOS Apple 芯片。更新签名与 Apple Developer ID／公证是不同机制，辅助功能授权的升级行为仍需按系统提示处理。
+- 当前 Release 同时提供 macOS Apple 芯片和 Windows x64 更新包。更新签名与 Apple Developer ID／公证是不同机制，辅助功能授权的升级行为仍需按系统提示处理。
 
 更新使用 GitHub 上的公开 Release，不需要用户提供 GitHub Token、LLM Key 或钥匙串授权。偏好、密钥和互传文件保留在原位置。
 
@@ -59,4 +59,4 @@ Nobody 为开发者提供快捷键翻译、划词阅读和局域网文字／文�
 shasum -a 256 -c Nobody-<版本>-macOS-arm64.sha256
 ```
 
-清单包含 DMG、ZIP、签名更新包及更新清单；只下载其中部分文件时，其余项会提示文件不存在，可单独计算已下载文件的 SHA-256 与清单对应项比对。
+平台清单包含 DMG、ZIP、签名更新包及平台元数据；合并后的 latest.json 提供单独的校验清单；只下载其中部分文件时，其余项会提示文件不存在，可单独计算已下载文件的 SHA-256 与清单对应项比对。

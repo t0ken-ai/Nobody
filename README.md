@@ -6,17 +6,17 @@
 
 **语言不同，价值不减。**
 
-**[⬇ 下载 macOS 安装包](https://github.com/t0ken-ai/Nobody/releases/latest) · [安装说明](docs/release-macos.md#下载)**　[![macOS 安装包构建状态](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml/badge.svg?branch=main)](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml)
+**[⬇ 下载 macOS / Windows 安装包](https://github.com/t0ken-ai/Nobody/releases/latest) · [macOS 安装](docs/release-macos.md) · [Windows 安装](docs/release-windows.md)**　[![安装包构建状态](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml/badge.svg?branch=main)](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml)
 
 [![Nobody 操作演示：快捷键翻译输入、划词显示译文](docs/media/nobody-demo.gif)](docs/media/nobody-demo.mp4)
 
-[查看完整演示视频](docs/media/nobody-demo.mp4) · Apple 芯片 Mac · 系统翻译 / 自定义 LLM
+[查看完整演示视频](docs/media/nobody-demo.mp4) · macOS / Windows · 系统翻译 / 自定义 LLM
 
 Nobody 是面向开发者的桌面翻译与局域网互传工具。用母语写下想法，通过快捷键转成英文；划选外语内容，直接阅读译文；在自己的电脑之间发送文字和文件。
 
 Translation and local-network sharing for developers.
 
-正式安装包和每版更新摘要见 **[GitHub Releases](https://github.com/t0ken-ai/Nobody/releases)**。0.1.1 起支持应用内检查、下载及安装更新。[自动更新说明](docs/release-macos.md#自动更新)
+正式安装包和每版更新摘要见 **[GitHub Releases](https://github.com/t0ken-ai/Nobody/releases)**。macOS 0.1.1 起、Windows 0.1.2 起支持应用内检查、下载及安装更新。[自动更新说明](docs/release-macos.md#自动更新)
 
 [使用指南](docs/usage.md) · [macOS 安装](docs/release-macos.md) · [开发指南](docs/development.md) · [参与贡献](CONTRIBUTING.md) · [MIT 许可证](LICENSE)
 
@@ -27,17 +27,17 @@ Translation and local-network sharing for developers.
 - **跟随浮窗**：优先显示在选区上方，支持拖动、长文滚动和系统深浅外观；macOS 关闭浮窗后返回来源应用。
 - **两种翻译引擎**：macOS 系统翻译，或兼容 Chat Completions 的自定义 LLM。支持编辑翻译角色与规则、测试连接和 Markdown 展示。
 - **局域网互传**：自动发现在线设备，首次双方确认信任，之后加密直传文字和多个文件，无云端中转。
-- **自动更新**：启动后及每 6 小时检查 GitHub 正式版本，显示更新摘要；支持稍后提醒、跳过版本，点击后下载、验签、安装并重启。当前自动安装支持 macOS Apple 芯片。
+- **自动更新**：启动后及每 6 小时检查 GitHub 正式版本，显示更新摘要；支持稍后提醒、跳过版本，点击后下载、验签、安装并重启。当前自动安装支持 macOS Apple 芯片和 Windows x64。
 - **后台常驻**：关闭主窗口后仍可翻译和接收文件，通过菜单栏或系统托盘打开界面、进入互传或退出。
 
 ## 平台支持
 
-当前版本处于早期阶段，主要在 Apple 芯片 Mac 上验证。Windows 已有适配代码，尚未完成整应用实机验收。
+当前版本处于早期阶段，主要在 Apple 芯片 Mac 上验证。Windows 提供 x64 安装包和 CI 安装检查，跨应用交互尚未完成实机验收。
 
 | 平台 | 系统翻译 | 自定义 LLM | 验证状态 |
 | --- | --- | --- | --- |
 | macOS | macOS 15+，首次使用可能下载语言包 | 支持 | Apple 芯片 Mac 已验证主要流程 |
-| Windows | 不提供 Apple 系统翻译 | 支持 | 原生适配模块已交叉编译，实机待验证 |
+| Windows | 不提供 Apple 系统翻译 | 支持 | 提供 x64 安装包；CI 检查构建、验签与安装，交互实机待验证 |
 | Linux | — | — | 暂未支持 |
 
 macOS 应用最低版本声明为 13.0；13/14 需要使用 LLM，旧系统及 Intel Mac 仍待实机验证。能力边界见 [兼容性与验证范围](docs/verification.md)。
@@ -48,7 +48,9 @@ macOS 应用最低版本声明为 13.0；13/14 需要使用 LLM，旧系统及 I
 
 macOS 安装包为 `Nobody-<版本>-macOS-arm64.dmg`，仅适用于 Apple 芯片。打开后将 Nobody 拖入「应用程序」，升级前先退出旧版本。也可使用 ZIP 中的应用。
 
-`main` 分支提交、版本标签或手动运行均可触发安装包构建；版本标签构建成功后发布 GitHub Release，提供 DMG、ZIP、校验清单和签名更新包。详见 [下载说明](docs/release-macos.md#下载)。当前使用 ad-hoc 签名，尚未进行 Developer ID 签名与 Apple 公证。
+Windows 安装包为 `Nobody-<版本>-Windows-x64-setup.exe`，默认安装到当前用户目录，使用自定义 LLM 翻译。详见 [Windows 安装说明](docs/release-windows.md)。
+
+`main` 分支提交、版本标签或手动运行均可触发两个平台的安装包构建；版本标签构建成功后发布 GitHub Release，提供 macOS DMG / ZIP、Windows EXE、校验清单和签名更新包。详见 [下载说明](docs/release-macos.md#下载)。macOS 使用 ad-hoc 签名，尚未进行 Apple 公证；Windows 暂无 Authenticode 发布者证书。
 
 ### 翻译
 

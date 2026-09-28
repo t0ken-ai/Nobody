@@ -7,12 +7,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[tokio::test]
 #[ignore = "run node scripts/test-updater.mjs to create an ephemeral signed fixture"]
-async fn isolated_signed_updater_install() {
+async fn isolated_signed_update_verification() {
     let fixture = std::path::PathBuf::from(
         std::env::var_os("NOBODY_UPDATE_FIXTURE_DIR").expect("fixture directory required"),
     );
-    let archive = std::fs::read(fixture.join("update.tar.gz")).unwrap();
-    let signature = std::fs::read_to_string(fixture.join("update.tar.gz.sig")).unwrap();
+    let archive = std::fs::read(fixture.join("update.bin")).unwrap();
+    let signature = std::fs::read_to_string(fixture.join("update.bin.sig")).unwrap();
     let public_key = std::fs::read_to_string(fixture.join("test.key.pub")).unwrap();
     let version = std::fs::read_to_string(fixture.join("version.txt")).unwrap();
     let wrong_version = format!(
@@ -50,7 +50,8 @@ async fn isolated_signed_updater_install() {
                 };
                 serde_json::to_vec(&json!({"version":version,"notes":"## Signed fixture\n- Update preserved.",
                         "platforms":{"darwin-aarch64":{"signature":signature.trim(),"url":format!("http://{address}/{package}")},
-                                     "darwin-x86_64":{"signature":signature.trim(),"url":format!("http://{address}/{package}")}}})).unwrap()
+                                     "darwin-x86_64":{"signature":signature.trim(),"url":format!("http://{address}/{package}")},
+                                     "windows-x86_64":{"signature":signature.trim(),"url":format!("http://{address}/{package}")}}})).unwrap()
             };
             stream
                 .write_all(
@@ -113,11 +114,19 @@ async fn isolated_signed_updater_install() {
         .unwrap();
     assert!(update.body.as_deref().unwrap().contains("Signed fixture"));
     let bytes = update.download(|_, _| {}, || {}).await.unwrap();
-    update.install(bytes).unwrap();
-    assert_eq!(
-        std::fs::read(&installed).unwrap(),
-        std::fs::read(fixture.join("expected-binary")).unwrap()
-    );
+    #[cfg(target_os = "macos")]
+    {
+        update.install(bytes).unwrap();
+        assert_eq!(
+            std::fs::read(&installed).unwrap(),
+            std::fs::read(fixture.join("expected-binary")).unwrap()
+        );
+    }
+    // Windows install() intentionally exits its caller after launching NSIS.
+    // Verify signed bytes here; test-windows-installer.ps1 tests installation
+    // and the /UPDATE path separately without terminating the Rust test runner.
+    #[cfg(target_os = "windows")]
+    assert_eq!(bytes, std::fs::read(fixture.join("update.bin")).unwrap());
     assert_eq!(
         std::fs::read_to_string(&user_data).unwrap(),
         "preserve this unrelated data"

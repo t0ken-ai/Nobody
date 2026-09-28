@@ -1,4 +1,5 @@
-name: Build macOS installers
+# Keep this filename so existing README badges and bookmarked Actions URLs work.
+name: Build installers
 
 on:
   push:
@@ -6,23 +7,32 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
-# Branch pushes produce testable artifacts. Version tags additionally publish a
-# complete signed Release; ordinary checks and PRs never receive signing keys.
 permissions:
   contents: read
 
 concurrency:
-  group: macos-installers-${{ github.ref }}
+  group: installers-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    # macos-26 is Apple Silicon and includes the Translation-capable SDK.
-    # An explicit label avoids macos-latest changing architecture/SDK silently.
-    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Pin the Mac SDK/architecture needed by Apple Translation.
+          - os: macos-26
+            platform: macOS-arm64
+            target: darwin-aarch64
+            jobs: 2
+          - os: windows-latest
+            platform: Windows-x64
+            target: windows-x86_64
+            jobs: 4
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
-      CARGO_BUILD_JOBS: 2
+      CARGO_BUILD_JOBS: ${{ matrix.jobs }}
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -34,96 +44,94 @@ jobs:
           node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
-
+      # Main and its later release tag share the exact source commit. Reuse only
+      # that commit's compilation; never cache signing keys or user directories.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: nobody-release-${{ matrix.target }}-${{ hashFiles('src-tauri/Cargo.lock') }}-${{ github.sha }}
       - name: Check platform and release version
         id: version
-        shell: bash
-        run: |
-          node --input-type=module <<'JS'
-          import { readFileSync, appendFileSync } from 'node:fs';
-          if (process.platform !== 'darwin' || process.arch !== 'arm64') {
-            throw new Error('The packaging script requires an Apple Silicon Mac.');
-          }
-          const { version } = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8'));
-          const npm = JSON.parse(readFileSync('package.json', 'utf8'));
-          const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
-          const cargo = readFileSync('src-tauri/Cargo.toml', 'utf8').match(/\[package\][\s\S]*?\nversion = "([^"]+)"/);
-          if (npm.version !== version || lock.packages[''].version !== version || cargo?.[1] !== version) {
-            throw new Error('App, npm and Rust versions must agree before signing.');
-          }
-          // A tag must name the actual bundle version, not relabel an old app.
-          if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME !== `v${version}`) {
-            throw new Error(`Tag must match the app version: v${version}`);
-          }
-          appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
-          JS
-          xcrun swiftc --version
-          xcrun --sdk macosx --show-sdk-version
-
+        run: node scripts/check-release.mjs
       - run: npm ci
-      - name: Check frontend and native translation rules
+      - name: Check frontend and release metadata
         run: |
           npm run check
+          node --test scripts/test-release-metadata.mjs
+      - name: Check native translation rules
+        if: runner.os == 'macOS'
+        run: |
           node scripts/test-selection-layout.mjs
           node scripts/test-translation-models.mjs
-
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked
-
-      - name: Verify signed update installation in an isolated bundle
+      - name: Verify updater signature and version checks
         run: node scripts/test-updater.mjs
-
-      # The local and CI packages share the same build/signature/archive checks.
-      # Never upload the raw .app tree: artifact archives may change file modes.
-      - name: Build and verify DMG and ZIP
+      # Only the bundle step receives the signing key; normal checks and PRs do not.
+      - name: Build and verify macOS installers
+        if: runner.os == 'macOS'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: node scripts/package-release.mjs
-
+      - name: Build and verify Windows installer
+        if: runner.os == 'Windows'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: node scripts/package-windows.mjs
+      - name: Verify Windows clean installation and update mode
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test-windows-installer.ps1
       - name: Upload installers
         id: installers
         uses: actions/upload-artifact@v7
         with:
-          name: Nobody-${{ steps.version.outputs.version }}-macOS-arm64
+          name: Nobody-${{ steps.version.outputs.version }}-${{ matrix.platform }}
           path: |
-            artifacts/releases/Nobody-*-macOS-arm64.dmg
-            artifacts/releases/Nobody-*-macOS-arm64.zip
-            artifacts/releases/Nobody-*-macOS-arm64.sha256
-            artifacts/releases/Nobody-*-macOS-arm64.app.tar.gz
-            artifacts/releases/Nobody-*-macOS-arm64.app.tar.gz.sig
-            artifacts/releases/latest.json
-            artifacts/releases/release-notes.md
+            artifacts/releases/Nobody-*
+            artifacts/releases/manifest-${{ matrix.target }}.json
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
-
       - name: Add download link to run summary
+        shell: bash
         env:
           INSTALLER_URL: ${{ steps.installers.outputs.artifact-url }}
+          PLATFORM: ${{ matrix.platform }}
         run: |
-          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
-          ## macOS installers ready
-
-          [Download DMG, ZIP and SHA-256 checksums]($INSTALLER_URL)
-
-          Apple Silicon only. Ad-hoc signed; not Apple notarized.
-          Sign in to GitHub to download this artifact. Retained for 30 days.
-          EOF
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF_SUMMARY
+          ## $PLATFORM installers ready
+          [Download installers, update signatures and SHA-256 checksums]($INSTALLER_URL)
+          Sign in to download this test artifact; retained for 30 days.
+          Official version tags publish both platforms together in Releases.
+          EOF_SUMMARY
 
   publish:
-    # Publishing is a separate least-privilege job: the compiler never receives
-    # a token that can modify Releases. Build failure leaves latest untouched.
+    # Wait for the entire matrix. Neither builder can overwrite the other's feed.
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
       - uses: actions/download-artifact@v7
         with:
-          name: Nobody-${{ needs.build.outputs.version }}-macOS-arm64
-          path: artifacts
+          pattern: Nobody-${{ needs.build.outputs.version }}-*
+          path: artifacts/releases
+          merge-multiple: true
+      - name: Verify both platforms and merge update feed
+        run: node scripts/merge-updater.mjs artifacts/releases
       - name: Publish the complete release and update feed
         env:
           GH_TOKEN: ${{ github.token }}
@@ -132,21 +140,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cd artifacts
-          sha256sum --check "Nobody-${VERSION}-macOS-arm64.sha256"
-          # A failed upload can be retried while still a draft. Published tags
-          # are immutable here so existing users never get silently changed bits.
+          cd artifacts/releases
+          for checksums in *.sha256; do sha256sum --check "$checksums"; done
+          # Retry incomplete drafts only. Never replace a published version's bits.
           if draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null); then
             if [ "$draft" != "true" ]; then
               echo "Release $TAG is already published; bump the version instead."
               exit 1
             fi
             gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
-              ./*.dmg ./*.zip ./*.sha256 ./*.tar.gz ./*.sig ./latest.json
+              ./Nobody-* ./manifest-*.json ./latest.json ./latest.json.sha256
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file release-notes.md
           else
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
               --title "Nobody $VERSION" --notes-file release-notes.md \
-              ./*.dmg ./*.zip ./*.sha256 ./*.tar.gz ./*.sig ./latest.json
+              ./Nobody-* ./manifest-*.json ./latest.json ./latest.json.sha256
           fi
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest

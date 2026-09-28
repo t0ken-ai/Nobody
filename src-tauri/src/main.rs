@@ -11,7 +11,7 @@ mod selection;
 mod transfer;
 mod translation;
 mod updater;
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 mod updater_tests;
 
 use serde::{Deserialize, Serialize};

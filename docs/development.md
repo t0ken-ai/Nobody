@@ -58,9 +58,10 @@ macOS 原生规则检查会编译生产 Swift 适配层，使用合成数据，�
 node scripts/test-selection-layout.mjs
 node scripts/test-translation-models.mjs
 node scripts/test-updater.mjs
+node --test scripts/test-release-metadata.mjs
 ```
 
-更新安装检查使用临时签名密钥、loopback 服务和一次性 `.app`，验证篡改包、错配版本被拒绝及正常安装，不操作已安装的 Nobody 或用户数据。
+更新验签检查在 macOS / Windows 均使用临时签名密钥及 loopback 服务，验证篡改包和错配版本被拒绝。macOS 同时安装到一次性 `.app`；Windows 安装检查由 `scripts/test-windows-installer.ps1` 在独立的 GitHub runner 内执行，覆盖干净安装与 `/UPDATE` 文件替换，不对维护者电脑的已安装 Nobody 执行。
 
 可选实测需明确选择，不能用常规测试结果替代：
 
@@ -86,13 +87,20 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked live_zai_translation --
 TAURI_SIGNING_PRIVATE_KEY="$HOME/.translateme-release/nobody-updater.key" node scripts/package-release.mjs
 ```
 
-脚本执行 Release 构建、签名验证、DMG / ZIP 完整性检查，输出 `artifacts/releases/Nobody-<版本>-macOS-arm64.{dmg,zip,sha256}`。DMG 包含应用、Applications 链接及 [安装说明](release-macos.md)；不打包用户配置和密钥。该脚本仅支持 Apple 芯片，同时生成 `.app.tar.gz`、`.sig`、`latest.json` 和发行说明。Windows 本地包请使用上面的不生成更新产物的构建命令。
+脚本执行 Release 构建、签名验证、DMG / ZIP 完整性检查，输出 `artifacts/releases/Nobody-<版本>-macOS-arm64.{dmg,zip,sha256}`。DMG 包含应用、Applications 链接及 [安装说明](release-macos.md)；不打包用户配置和密钥。该脚本仅支持 Apple 芯片，同时生成 `.app.tar.gz`、`.sig` 和 `manifest-darwin-aarch64.json`。Windows 签名分发使用以下命令（私钥仍在仓库外）：
+
+```powershell
+$env:TAURI_SIGNING_PRIVATE_KEY = "$env:USERPROFILE\.translateme-release\nobody-updater.key"
+node scripts/package-windows.mjs
+```
+
+Windows 产物为 `Nobody-<版本>-Windows-x64-setup.exe`、`.sig`、`.sha256` 和 `manifest-windows-x86_64.json`。默认按当前用户安装，NSIS 使用中英文语言并检查 WebView2；该更新签名不等同于 Authenticode 签名。
 
 当前 macOS 配置使用 ad-hoc 签名。正式分发的 Developer ID 签名与 Apple 公证需另行配置；Release 优化不代表已经公证。
 
-## GitHub Actions 安装包
+## GitHub Actions 双平台安装包
 
-[Build macOS installers](../.github/workflows/macos-installers.yml) 独立于常规检查工作流，复用上述打包脚本。使用 GitHub 托管的 `macos-26` Apple Silicon 环境和其自带的 Xcode / Translation SDK，无需上传本地工具链或用户配置。
+[Build installers](../.github/workflows/macos-installers.yml) 独立于常规检查工作流，复用上述打包脚本。使用 `macos-26` Apple Silicon 和 `windows-latest` x64 两个独立 runner，无需上传本地工具链或用户配置。工作流文件名保留 `macos-installers.yml`，以兼容现有徽章与链接。
 
 | 触发方式 | 结果 |
 | --- | --- |
@@ -100,11 +108,11 @@ TAURI_SIGNING_PRIVATE_KEY="$HOME/.translateme-release/nobody-updater.key" node s
 | 推送 `v<版本>` 标签 | 校验版本后构建，完整上传所有文件后发布正式 Release |
 | Actions 页面点击 Run workflow | 构建选择的分支／标签 |
 
-工作流执行 TypeScript、Rust 测试和原生翻译规则检查，再构建并校验 DMG / ZIP。安装包和校验清单保留 30 天，成功运行的摘要提供下载链接。下载方式见 [安装说明](release-macos.md#下载)。
+工作流执行 TypeScript、Rust 测试和更新清单合并检查；macOS 另跑原生翻译规则，Windows 另跑真实 NSIS 安装与更新模式检查。两个平台各自生成并验签，之后上传平台独占的更新元数据。安装包和校验清单保留 30 天，成功运行的摘要提供下载链接。下载方式见 [安装说明](release-macos.md#下载)。
 
-构建任务只有仓库读取权限，更新签名使用 `TAURI_SIGNING_PRIVATE_KEY` 这个 Actions Secret（如私钥有密码，还需 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）。独立发布任务才获得 `contents: write`，先上传到草稿，完整成功后发布；已发布版本不覆盖，修复应增加版本号。
+构建任务只有仓库读取权限，更新签名使用 `TAURI_SIGNING_PRIVATE_KEY` 这个 Actions Secret（如私钥有密码，还需 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）。独立发布任务等待两个平台都成功，再用 `scripts/merge-updater.mjs` 校验平台文件、版本、摘要、签名对应关系和 SHA-256，合并生成包含 `darwin-aarch64` 与 `windows-x86_64` 的唯一 `latest.json`。只有这个任务获得 `contents: write`，先完整上传到草稿，再发布；已发布版本不覆盖，修复应增加版本号。
 
-发布新版本时，同步 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 和 `src-tauri/tauri.conf.json`，并添加 `docs/releases/v<版本>.md`。此文件同时用作 Release 正文和 `latest.json` 中的 `notes`，客户端直接显示，避免摘要与版本脱节。确认检查通过后推送对应 `v<版本>` 标签。
+发布新版本时，同步 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 和 `src-tauri/tauri.conf.json`，并添加 `docs/releases/v<版本>.md`。此文件同时用作两个平台的 Release 正文和 `latest.json` 中的 `notes`，客户端直接显示，避免摘要与版本脱节。确认检查通过后推送对应 `v<版本>` 标签。
 
 更新签名私钥仅由维护者保管，放在仓库外并备份，不能提交或分发。应用只包含公钥；使用 Tauri CLI 2.12+ 生成带版本约束的签名，客户端要求 `requireSignedVersion`，拒绝清单版本与签名版本不一致的包。签名不依赖系统钥匙串，也不等同于 Apple 公证。分叉项目发布自己的版本时，应替换端点、公钥和私钥。
 

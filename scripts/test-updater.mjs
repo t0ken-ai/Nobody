@@ -1,12 +1,14 @@
-/** Exercise actual Tauri download, version-bound signature verification and
- * installation into a disposable .app. An ephemeral signing key is never used
- * by the shipped app; the running Nobody and all user data remain untouched. */
+/** Exercise actual Tauri download and version-bound signature verification on
+ * both platforms. macOS installs into a disposable .app; Windows installation
+ * is separately exercised on the disposable CI runner because its plugin exits
+ * the host process. No running Nobody or local user data is touched here. */
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
-if (process.platform !== 'darwin') throw new Error('The isolated installer check requires macOS.');
+const mac = process.platform === 'darwin';
+if (!mac && process.platform !== 'win32') throw new Error('macOS or Windows required.');
 const root = fileURLToPath(new URL('../', import.meta.url));
 const artifacts = join(root, 'artifacts');
 mkdirSync(artifacts, { recursive: true });
@@ -24,26 +26,29 @@ try {
   const release = process.argv.includes('--release');
   const config = JSON.parse(readFileSync(join(root, 'src-tauri/tauri.conf.json'), 'utf8'));
   const version = release ? config.version : '0.1.1';
+  const archive = join(fixture, 'update.bin');
   writeFileSync(join(fixture, 'version.txt'), version);
   if (release) {
     // Validate the exact published bytes against the public key embedded in
     // the client; a mistakenly configured CI secret must fail before upload.
     const bundle = join(root, 'src-tauri/target/release/bundle/macos/Nobody.app');
-    copyFileSync(`${bundle}.tar.gz`, join(fixture, 'update.tar.gz'));
-    copyFileSync(`${bundle}.tar.gz.sig`, join(fixture, 'update.tar.gz.sig'));
-    copyFileSync(join(bundle, 'Contents/MacOS/nobody'), join(fixture, 'expected-binary'));
+    const source = mac ? `${bundle}.tar.gz` : join(root, 'artifacts/releases', `Nobody-${version}-Windows-x64-setup.exe`);
+    copyFileSync(source, archive);
+    copyFileSync(`${source}.sig`, `${archive}.sig`);
+    if (mac) copyFileSync(join(bundle, 'Contents/MacOS/nobody'), join(fixture, 'expected-binary'));
     writeFileSync(join(fixture, 'test.key.pub'), config.plugins.updater.pubkey);
   } else {
     const binary = join(fixture, 'payload/Nobody.app/Contents/MacOS');
     mkdirSync(binary, { recursive: true });
     writeFileSync(join(binary, 'nobody'), 'updated fixture; never executed\n', { mode: 0o755 });
-    run('tar', ['-czf', join(fixture, 'update.tar.gz'), '-C', join(fixture, 'payload'), 'Nobody.app']);
-    const cli = join(root, 'node_modules/.bin/tauri');
-    run(cli, ['signer', 'generate', '--ci', '-p', '', '-w', join(fixture, 'test.key')], true);
-    run(cli, ['signer', 'sign', '-f', join(fixture, 'test.key'), '-p', '', '--app-version', '0.1.1', join(fixture, 'update.tar.gz')], true);
+    if (mac) run('tar', ['-czf', archive, '-C', join(fixture, 'payload'), 'Nobody.app']);
+    else writeFileSync(archive, 'signed Windows download fixture; never executed\n');
+    const cli = join(root, 'node_modules/@tauri-apps/cli/tauri.js');
+    run(process.execPath, [cli, 'signer', 'generate', '--ci', '-p', '', '-w', join(fixture, 'test.key')], true);
+    run(process.execPath, [cli, 'signer', 'sign', '-f', join(fixture, 'test.key'), '-p', '', '--app-version', '0.1.1', archive], true);
     copyFileSync(join(binary, 'nobody'), join(fixture, 'expected-binary'));
   }
-  run('cargo', ['test', '--manifest-path', 'src-tauri/Cargo.toml', '--locked', 'isolated_signed_updater_install', '--', '--ignored', '--nocapture']);
+  run('cargo', ['test', '--manifest-path', 'src-tauri/Cargo.toml', '--locked', 'isolated_signed_update_verification', '--', '--ignored', '--nocapture']);
 } finally {
   // Only the mkdtemp directory owned by this invocation is removed.
   rmSync(fixture, { recursive: true, force: true });

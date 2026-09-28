@@ -47,7 +47,7 @@ run(process.execPath, ['scripts/test-updater.mjs', '--release']);
 
 // Stream hashes so packaging memory does not grow with the bundle size.
 const sums = [];
-for (const path of [dmg, zip, join(output, `${name}.app.tar.gz`), join(output, `${name}.app.tar.gz.sig`), join(output, 'latest.json')]) {
+for (const path of [dmg, zip, join(output, `${name}.app.tar.gz`), join(output, `${name}.app.tar.gz.sig`), join(output, 'manifest-darwin-aarch64.json')]) {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(path)) hash.update(chunk);
   sums.push(`${hash.digest('hex')}  ${basename(path)}`);
