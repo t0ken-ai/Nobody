@@ -53,6 +53,8 @@ jobs:
             ~/.cargo/git
             src-tauri/target
           key: nobody-release-${{ matrix.target }}-${{ hashFiles('src-tauri/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            nobody-release-${{ matrix.target }}-${{ hashFiles('src-tauri/Cargo.lock') }}-
       - name: Check platform and release version
         id: version
         run: node scripts/check-release.mjs
@@ -67,7 +69,11 @@ jobs:
           node scripts/test-selection-layout.mjs
           node scripts/test-translation-models.mjs
       - name: Run Rust tests
+        if: runner.os == 'macOS'
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+      - name: Run Windows release tests
+        if: runner.os == 'Windows'
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --release --features custom-protocol
       - name: Verify updater signature and version checks
         run: node scripts/test-updater.mjs
       # Only the bundle step receives the signing key; normal checks and PRs do not.
@@ -83,10 +89,6 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: node scripts/package-windows.mjs
-      - name: Verify Windows clean installation and update mode
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/test-windows-installer.ps1
       - name: Upload installers
         id: installers
         uses: actions/upload-artifact@v7
@@ -111,10 +113,28 @@ jobs:
           Official version tags publish both platforms together in Releases.
           EOF_SUMMARY
 
+  windows-install-test:
+    # Keep install failures separate from compilation so reruns can reuse the
+    # exact signed artifact and successful build caches, without rebuilding it.
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v7
+        with:
+          name: Nobody-${{ needs.build.outputs.version }}-Windows-x64
+          path: artifacts/releases
+      - name: Verify Windows clean installation and update mode
+        shell: pwsh
+        run: ./scripts/test-windows-installer.ps1
+
   publish:
     # Wait for the entire matrix. Neither builder can overwrite the other's feed.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, windows-install-test]
     runs-on: ubuntu-latest
     permissions:
       contents: write

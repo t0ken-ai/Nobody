@@ -7,7 +7,9 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows' -or !$env:RU
 }
 $config = Get-Content 'src-tauri/tauri.conf.json' -Raw | ConvertFrom-Json
 $installer = (Resolve-Path "artifacts/releases/Nobody-$($config.version)-Windows-x64-setup.exe").Path
-$expected = (Get-FileHash 'src-tauri/target/release/nobody.exe' -Algorithm SHA256).Hash
+$manifest = Get-Content 'artifacts/releases/manifest-windows-x86_64.json' -Raw | ConvertFrom-Json
+$expected = $manifest.binary_sha256
+if ($expected -notmatch '^[a-fA-F0-9]{64}$' -or $manifest.version -ne $config.version) { throw 'Missing matching payload verification metadata.' }
 $fixture = Join-Path $env:RUNNER_TEMP ("Nobody installer " + [guid]::NewGuid().ToString('N'))
 $destination = Join-Path $fixture 'installed app'
 $sentinel = Join-Path $fixture 'unrelated-data.txt'
@@ -16,19 +18,26 @@ Set-Content $sentinel 'preserve unrelated data'
 
 # /D must be the final NSIS argument, unquoted even when the path has spaces.
 # No /R is used: validation must not auto-launch the app or announce a LAN peer.
-function Invoke-Installer([string]$arguments) {
-    $process = Start-Process -FilePath $installer -ArgumentList $arguments -PassThru
-    if (!$process.WaitForExit(180000)) { $process.Kill(); throw 'Installer timed out.' }
+function Invoke-Installer([string]$phase, [string]$arguments) {
+    Write-Host "Starting $phase"
+    # -Wait waits for the installer process tree, unlike Process.WaitForExit(),
+    # which can observe only a bootstrapper and race the payload-copying child.
+    $process = Start-Process -FilePath $installer -ArgumentList $arguments -PassThru -Wait
     if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
-    if ((Get-FileHash (Join-Path $destination 'nobody.exe') -Algorithm SHA256).Hash -ne $expected) { throw 'Installed binary does not match the signed release build.' }
+    $binary = Get-Item (Join-Path $destination 'nobody.exe')
+    $actual = (Get-FileHash $binary.FullName -Algorithm SHA256).Hash
+    Write-Host "$phase payload: size=$($binary.Length), version=$($binary.VersionInfo.ProductVersion), sha256=$actual; expected=$expected"
+    if ($actual -ne $expected) { throw "$phase installed binary does not match the signed release build." }
     if ((Get-Content $sentinel -Raw).Trim() -ne 'preserve unrelated data') { throw 'Unrelated data changed.' }
 }
 try {
-    Invoke-Installer "/S /D=$destination"
+    Invoke-Installer 'clean-install' "/S /D=$destination"
     # Force an observable replacement; a successful no-op cannot satisfy the
     # update check. The test marker is never executed and stays in RUNNER_TEMP.
     [IO.File]::WriteAllText((Join-Path $destination 'nobody.exe'), 'old disposable binary')
-    Invoke-Installer "/S /UPDATE /D=$destination"
+    # Model an older installed payload, not a file modified after this release.
+    (Get-Item (Join-Path $destination 'nobody.exe')).LastWriteTimeUtc = [datetime]'2000-01-01T00:00:00Z'
+    Invoke-Installer 'update-replacement' "/S /UPDATE /D=$destination"
     Write-Host 'PASS: NSIS clean install and update-mode replacement preserve unrelated data.'
 } finally {
     $uninstaller = Join-Path $destination 'uninstall.exe'

@@ -48,7 +48,10 @@ try {
     run(process.execPath, [cli, 'signer', 'sign', '-f', join(fixture, 'test.key'), '-p', '', '--app-version', '0.1.1', archive], true);
     copyFileSync(join(binary, 'nobody'), join(fixture, 'expected-binary'));
   }
-  run('cargo', ['test', '--manifest-path', 'src-tauri/Cargo.toml', '--locked', 'isolated_signed_update_verification', '--', '--ignored', '--nocapture']);
+  // Windows vendored OpenSSL is expensive to compile twice. Use the packaging
+  // profile/features for both checks and bundle verification to share its build.
+  const profile = mac ? [] : ['--release', '--features', 'custom-protocol'];
+  run('cargo', ['test', '--manifest-path', 'src-tauri/Cargo.toml', '--locked', ...profile, 'isolated_signed_update_verification', '--', '--ignored', '--nocapture']);
 } finally {
   // Only the mkdtemp directory owned by this invocation is removed.
   rmSync(fixture, { recursive: true, force: true });
