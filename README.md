@@ -1,24 +1,22 @@
 <p align="center">
-  <img src="src/assets/nobody-icon.png" width="96" alt="Nobody logo">
+  <img src="src/assets/nobody-icon.png" width="72" alt="Nobody logo">
 </p>
 
 # Nobody
 
 **语言不同，价值不减。**
 
-Nobody 是面向开发者的桌面翻译与局域网互传工具。用母语写下想法，通过快捷键转成英文；划选外语内容，直接阅读译文；在自己的电脑之间发送文字和文件。
-
-Translation and local-network sharing for developers.
-
-**[⬇ 下载 macOS 安装包](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml) · [安装说明](docs/release-macos.md#下载)**
-
-[![macOS 安装包构建状态](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml/badge.svg?branch=main)](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml)
-
-在成功构建的 **Artifacts** 下载 DMG / ZIP（需登录 GitHub）。[自动构建说明](docs/development.md#github-actions-安装包)
+**[⬇ 下载 macOS 安装包](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml) · [安装说明](docs/release-macos.md#下载)**　[![macOS 安装包构建状态](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml/badge.svg?branch=main)](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml)
 
 [![Nobody 操作演示：快捷键翻译输入、划词显示译文](docs/media/nobody-demo.gif)](docs/media/nobody-demo.mp4)
 
 [查看完整演示视频](docs/media/nobody-demo.mp4) · Apple 芯片 Mac · 系统翻译 / 自定义 LLM
+
+Nobody 是面向开发者的桌面翻译与局域网互传工具。用母语写下想法，通过快捷键转成英文；划选外语内容，直接阅读译文；在自己的电脑之间发送文字和文件。
+
+Translation and local-network sharing for developers.
+
+在成功构建的 **Artifacts** 下载 DMG / ZIP（需登录 GitHub）。[自动构建说明](docs/development.md#github-actions-安装包)
 
 [使用指南](docs/usage.md) · [macOS 安装](docs/release-macos.md) · [开发指南](docs/development.md) · [参与贡献](CONTRIBUTING.md) · [MIT 许可证](LICENSE)
 
