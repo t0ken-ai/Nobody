@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/assets/nobody-icon.png" width="72" alt="Nobody logo">
+  <img src="docs/media/nobody-logo.svg" width="72" alt="Nobody logo">
 </p>
 
 # Nobody

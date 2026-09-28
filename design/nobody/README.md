@@ -14,6 +14,8 @@
 | [b-symbol-black-on-white.png](exports/b-symbol-black-on-white.png) | 白底黑色符号 |
 | [b-logo-system.png](exports/b-logo-system.png) | 图标应用参考板，不参与构建 |
 
+README 使用 [nobody-logo.svg](../../docs/media/nobody-logo.svg)：内嵌标准透明符号的原始图像，通过透明蒙版适配深浅配色，避免将 App 图标的方形底色带入文档。
+
 `concepts/` 保留设计源素材，不参与应用构建。实际使用的是 B / Human。
 
 ## 重建图标
