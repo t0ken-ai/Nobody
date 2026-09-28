@@ -4,7 +4,7 @@
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createHash } from 'node:crypto';
+import { nsisPayloadHash } from './nsis-payload.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const { productName, version } = JSON.parse(readFileSync(join(root, 'src-tauri/tauri.conf.json'), 'utf8'));
@@ -39,8 +39,8 @@ writeFileSync(join(output, `manifest-${platform}.json`), `${JSON.stringify({
   notes,
   pub_date: new Date().toISOString(),
   // The independent Windows installer job has no Cargo target directory. Bind
-  // its expected installed payload to the binary that was just bundled.
-  ...(win ? { binary_sha256: createHash('sha256').update(readFileSync(join(root, 'src-tauri/target/release/nobody.exe'))).digest('hex') } : {}),
+  // its expected installed payload to the binary plus Tauri's NSIS marker.
+  ...(win ? { binary_sha256: nsisPayloadHash(readFileSync(join(root, 'src-tauri/target/release/nobody.exe'))) } : {}),
   platforms: {
     [platform]: {
       signature,

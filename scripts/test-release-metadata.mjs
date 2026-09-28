@@ -7,6 +7,21 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mergeUpdates } from './merge-updater.mjs';
+import { nsisPayloadHash } from './nsis-payload.mjs';
+
+// Installer bytes differ from the restored build output only at the bundle
+// marker. Do not hide corruption or mutate the original binary while checking.
+test('NSIS payload accounts for bundle marker and preserves all other bytes', () => {
+  const original = Buffer.from('header\u0000__TAURI_BUNDLE_TYPE_VAR_UNK\u0000payload');
+  const expected = Buffer.from('header\u0000__TAURI_BUNDLE_TYPE_VAR_NSS\u0000payload');
+  assert.equal(nsisPayloadHash(original), createHash('sha256').update(expected).digest('hex'));
+  assert.ok(original.includes('__TAURI_BUNDLE_TYPE_VAR_UNK'));
+  assert.notEqual(nsisPayloadHash(Buffer.concat([original, Buffer.from('changed')])), nsisPayloadHash(original));
+});
+test('NSIS payload rejects missing or ambiguous bundle markers', () => {
+  assert.throws(() => nsisPayloadHash(Buffer.from('unknown binary')), /Expected one/);
+  assert.throws(() => nsisPayloadHash(Buffer.from('__TAURI_BUNDLE_TYPE_VAR_UNK__TAURI_BUNDLE_TYPE_VAR_UNK')), /Expected one/);
+});
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'nobody-feed-'));
   for (const [target, label, suffixes] of [
