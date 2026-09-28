@@ -1,0 +1,29 @@
+/* The updater follows existing warm green/neutral surfaces. Its fixed overlay
+   remains outside the settings section so menu checks work from any page. */
+.update-settings-heading { display:flex; justify-content:space-between; align-items:center; gap:20px; margin-bottom:16px; }
+.update-settings-heading h2 { margin-bottom:4px; }
+.update-dialog { width:min(540px, calc(100vw - 40px)); max-height:calc(100vh - 48px); padding:28px; border:1px solid #d9e4dc; border-radius:20px; background:#fafcf9; color:#243b36; box-shadow:0 24px 90px #142d3b38; }
+.update-dialog::backdrop { background:#13271f59; backdrop-filter:blur(4px); }
+.update-heading { display:flex; align-items:center; gap:14px; }
+.update-brand.nobody-symbol { width:46px; height:46px; flex-basis:46px; color:#32664a; }
+.update-heading h2 { font-size:24px; font-weight:600; letter-spacing:-.6px; margin:4px 0 0; }
+.update-close { align-self:flex-start; margin-left:auto; background:none; border:0; color:#83908b; font-size:25px; width:30px; height:30px; line-height:1; }
+.update-version { color:#83908b; font-size:12px; margin:18px 0; }
+.update-notes { max-height:310px; overflow:auto; padding:18px; border:1px solid #e2e9e3; border-radius:12px; background:#f0f5f0; font-size:13px; line-height:1.7; overflow-wrap:anywhere; }
+.update-notes.markdown h1, .update-notes.markdown h2, .update-notes.markdown h3 { font-size:15px; color:inherit; letter-spacing:0; }
+.update-notes.markdown > :first-child { margin-top:0; }
+.update-notes.markdown > :last-child { margin-bottom:0; }
+.update-status { margin-top:16px; color:#75877b; font-size:12px; overflow-wrap:anywhere; }
+.update-status.error, .update-settings-status.error { color:#b54d43; }
+.update-dialog footer { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:25px; }
+.update-dialog footer > div { margin-left:auto; display:flex; gap:9px; }
+.update-progress { margin-top:20px; }
+.update-progress progress { width:100%; height:7px; accent-color:#16765c; }
+.update-progress span { display:block; margin-top:6px; color:#83908b; font-size:11px; font-variant-numeric:tabular-nums; }
+@media(prefers-color-scheme:dark) {
+  .update-dialog { color:#dde7df; background:#19221c; border-color:#36463a; box-shadow:0 24px 90px #0009; }
+  .update-brand.nobody-symbol { color:#e6eedf; }
+  .update-notes { background:#121c16; border-color:#334238; }
+  .update-status { color:#a4b5a8; }
+  .update-status.error, .update-settings-status.error { color:#f3a79d; }
+}

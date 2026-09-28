@@ -14,6 +14,7 @@ macOS 与 Windows 使用相同的用户目录布局，`~` 表示当前用户主�
 | `transfer/device/trusted.json` | 当前设备身份确认过的受信任设备 |
 | `transfer/settings.json` | 设备名称、互传开关和接收目录等设置 |
 | `transfer/inbox.json` | 有界的发送／接收记录，包含收到或发出的文字 |
+| `updates/state.json` | 自动检查开关、跳过的版本及提醒间隔；不含更新私钥 |
 | `received/` | 默认接收文件目录，可由用户修改 |
 
 非密钥偏好设置还保存在 Tauri 的应用配置目录，作为快捷键、目标语言、白名单和引擎配置的兼容副本。翻译历史不保存；发送的源文件不会复制到上述目录。

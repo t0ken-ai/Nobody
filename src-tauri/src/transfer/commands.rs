@@ -83,6 +83,14 @@ pub fn shutdown(app: &tauri::AppHandle) {
         }
     }
 }
+/// The coordinator may block a restart on real jobs without copying inboxes or
+/// exposing the service's private state to the updater module.
+pub fn pause_for_update(app: &tauri::AppHandle) -> Result<Option<super::UpdatePause>, String> {
+    match app.try_state::<LanState>().and_then(|s| s.service.clone().ok()) {
+        Some(service) => service.pause_for_update().map(Some),
+        None => Ok(None),
+    }
+}
 /// Main-window guard is repeated server-side, independent of hidden frontend controls.
 fn main_service(window: &tauri::WebviewWindow, state: &LanState) -> Result<Service, String> {
     if window.label() != "main" {

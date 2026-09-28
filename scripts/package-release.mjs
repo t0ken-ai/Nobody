@@ -42,10 +42,12 @@ run('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', app, zip]);
 run('hdiutil', ['create', '-volname', productName, '-srcfolder', staging, '-ov', '-format', 'UDZO', dmg]);
 run('hdiutil', ['verify', dmg]);
 run('unzip', ['-tq', zip]);
+run(process.execPath, ['scripts/prepare-updater.mjs']);
+run(process.execPath, ['scripts/test-updater.mjs', '--release']);
 
 // Stream hashes so packaging memory does not grow with the bundle size.
 const sums = [];
-for (const path of [dmg, zip]) {
+for (const path of [dmg, zip, join(output, `${name}.app.tar.gz`), join(output, `${name}.app.tar.gz.sig`), join(output, 'latest.json')]) {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(path)) hash.update(chunk);
   sums.push(`${hash.digest('hex')}  ${basename(path)}`);

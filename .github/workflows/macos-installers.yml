@@ -6,8 +6,8 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
-# Build downloadable artifacts only. No release publishing or signing secrets
-# are needed; ordinary checks and pull requests stay in check.yml.
+# Branch pushes produce testable artifacts. Version tags additionally publish a
+# complete signed Release; ordinary checks and PRs never receive signing keys.
 permissions:
   contents: read
 
@@ -23,6 +23,8 @@ jobs:
     timeout-minutes: 60
     env:
       CARGO_BUILD_JOBS: 2
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -43,6 +45,12 @@ jobs:
             throw new Error('The packaging script requires an Apple Silicon Mac.');
           }
           const { version } = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8'));
+          const npm = JSON.parse(readFileSync('package.json', 'utf8'));
+          const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
+          const cargo = readFileSync('src-tauri/Cargo.toml', 'utf8').match(/\[package\][\s\S]*?\nversion = "([^"]+)"/);
+          if (npm.version !== version || lock.packages[''].version !== version || cargo?.[1] !== version) {
+            throw new Error('App, npm and Rust versions must agree before signing.');
+          }
           // A tag must name the actual bundle version, not relabel an old app.
           if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME !== `v${version}`) {
             throw new Error(`Tag must match the app version: v${version}`);
@@ -62,9 +70,15 @@ jobs:
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked
 
+      - name: Verify signed update installation in an isolated bundle
+        run: node scripts/test-updater.mjs
+
       # The local and CI packages share the same build/signature/archive checks.
       # Never upload the raw .app tree: artifact archives may change file modes.
       - name: Build and verify DMG and ZIP
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: node scripts/package-release.mjs
 
       - name: Upload installers
@@ -76,6 +90,10 @@ jobs:
             artifacts/releases/Nobody-*-macOS-arm64.dmg
             artifacts/releases/Nobody-*-macOS-arm64.zip
             artifacts/releases/Nobody-*-macOS-arm64.sha256
+            artifacts/releases/Nobody-*-macOS-arm64.app.tar.gz
+            artifacts/releases/Nobody-*-macOS-arm64.app.tar.gz.sig
+            artifacts/releases/latest.json
+            artifacts/releases/release-notes.md
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
@@ -92,3 +110,43 @@ jobs:
           Apple Silicon only. Ad-hoc signed; not Apple notarized.
           Sign in to GitHub to download this artifact. Retained for 30 days.
           EOF
+
+  publish:
+    # Publishing is a separate least-privilege job: the compiler never receives
+    # a token that can modify Releases. Build failure leaves latest untouched.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: Nobody-${{ needs.build.outputs.version }}-macOS-arm64
+          path: artifacts
+      - name: Publish the complete release and update feed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.build.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd artifacts
+          sha256sum --check "Nobody-${VERSION}-macOS-arm64.sha256"
+          # A failed upload can be retried while still a draft. Published tags
+          # are immutable here so existing users never get silently changed bits.
+          if draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$draft" != "true" ]; then
+              echo "Release $TAG is already published; bump the version instead."
+              exit 1
+            fi
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+              ./*.dmg ./*.zip ./*.sha256 ./*.tar.gz ./*.sig ./latest.json
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file release-notes.md
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
+              --title "Nobody $VERSION" --notes-file release-notes.md \
+              ./*.dmg ./*.zip ./*.sha256 ./*.tar.gz ./*.sig ./latest.json
+          fi
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest

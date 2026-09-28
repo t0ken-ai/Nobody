@@ -6,7 +6,7 @@
 
 **语言不同，价值不减。**
 
-**[⬇ 下载 macOS 安装包](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml) · [安装说明](docs/release-macos.md#下载)**　[![macOS 安装包构建状态](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml/badge.svg?branch=main)](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml)
+**[⬇ 下载 macOS 安装包](https://github.com/t0ken-ai/Nobody/releases/latest) · [安装说明](docs/release-macos.md#下载)**　[![macOS 安装包构建状态](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml/badge.svg?branch=main)](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml)
 
 [![Nobody 操作演示：快捷键翻译输入、划词显示译文](docs/media/nobody-demo.gif)](docs/media/nobody-demo.mp4)
 
@@ -16,7 +16,7 @@ Nobody 是面向开发者的桌面翻译与局域网互传工具。用母语写�
 
 Translation and local-network sharing for developers.
 
-在成功构建的 **Artifacts** 下载 DMG / ZIP（需登录 GitHub）。[自动构建说明](docs/development.md#github-actions-安装包)
+正式安装包和每版更新摘要见 **[GitHub Releases](https://github.com/t0ken-ai/Nobody/releases)**。0.1.1 起支持应用内检查、下载及安装更新。[自动更新说明](docs/release-macos.md#自动更新)
 
 [使用指南](docs/usage.md) · [macOS 安装](docs/release-macos.md) · [开发指南](docs/development.md) · [参与贡献](CONTRIBUTING.md) · [MIT 许可证](LICENSE)
 
@@ -27,6 +27,7 @@ Translation and local-network sharing for developers.
 - **跟随浮窗**：优先显示在选区上方，支持拖动、长文滚动和系统深浅外观；macOS 关闭浮窗后返回来源应用。
 - **两种翻译引擎**：macOS 系统翻译，或兼容 Chat Completions 的自定义 LLM。支持编辑翻译角色与规则、测试连接和 Markdown 展示。
 - **局域网互传**：自动发现在线设备，首次双方确认信任，之后加密直传文字和多个文件，无云端中转。
+- **自动更新**：启动后及每 6 小时检查 GitHub 正式版本，显示更新摘要；支持稍后提醒、跳过版本，点击后下载、验签、安装并重启。当前自动安装支持 macOS Apple 芯片。
 - **后台常驻**：关闭主窗口后仍可翻译和接收文件，通过菜单栏或系统托盘打开界面、进入互传或退出。
 
 ## 平台支持
@@ -47,7 +48,7 @@ macOS 应用最低版本声明为 13.0；13/14 需要使用 LLM，旧系统及 I
 
 macOS 安装包为 `Nobody-<版本>-macOS-arm64.dmg`，仅适用于 Apple 芯片。打开后将 Nobody 拖入「应用程序」，升级前先退出旧版本。也可使用 ZIP 中的应用。
 
-仓库推送到 GitHub 后，`main` 分支提交、版本标签或手动运行均可触发安装包构建；在成功的 Actions 运行中下载 DMG、ZIP 和 SHA-256 清单。详见 [下载说明](docs/release-macos.md#下载)。当前使用 ad-hoc 签名，尚未进行 Developer ID 签名与 Apple 公证。
+`main` 分支提交、版本标签或手动运行均可触发安装包构建；版本标签构建成功后发布 GitHub Release，提供 DMG、ZIP、校验清单和签名更新包。详见 [下载说明](docs/release-macos.md#下载)。当前使用 ad-hoc 签名，尚未进行 Developer ID 签名与 Apple 公证。
 
 ### 翻译
 
@@ -76,6 +77,7 @@ macOS 安装包为 `Nobody-<版本>-macOS-arm64.dmg`，仅适用于 Apple 芯片
 - LLM 配置、密钥及互传数据位于用户主目录 `~/.translateme/`；不使用 macOS Keychain 或 Windows Credential Manager。
 - API Key 保存在 SQLCipher 数据库中，解密密钥存放在同一目录。**获得完整目录即可解密，不能将其视为独立的密钥保险库。**
 - 局域网传输使用 TLS 1.3，首次信任前不发送正文和文件内容。传输记录和接收文件不做 SQLCipher 静态加密，收到的文件不会自动执行。
+- 自动检查更新会访问 GitHub，下载时使用 GitHub 的资源服务；不上传翻译内容或本地配置，可在偏好设置中关闭自动检查。
 
 目录布局、备份和旧版迁移见 [本地存储](docs/local-storage.md)。
 
@@ -91,7 +93,7 @@ npm run desktop
 构建桌面应用：
 
 ```sh
-npm run bundle
+npm run bundle -- --config '{"bundle":{"createUpdaterArtifacts":false}}'
 ```
 
 技术栈为 **Tauri 2 + Rust + TypeScript**，macOS 原生能力通过 Swift 适配。开发环境、测试命令、打包与模块职责见 [开发指南](docs/development.md)。

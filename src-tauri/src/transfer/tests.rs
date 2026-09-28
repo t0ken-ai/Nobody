@@ -9,6 +9,22 @@ use tokio::{
 };
 use tokio_rustls::{TlsConnector, TlsStream};
 
+/// Updates may neither interrupt an existing job nor race a fresh reservation;
+/// a failed installer releases its pause without disabling the user's service.
+#[tokio::test]
+async fn update_pause_preserves_jobs_and_recovers_after_failure() {
+    let f = fixture("update-guard").await;
+    let (id, _) = f.service.begin("peer".into(), "Peer".into(), false).unwrap();
+    assert!(f.service.pause_for_update().is_err());
+    f.service.inner.lock().unwrap().active.remove(&id);
+    let pause = f.service.pause_for_update().unwrap();
+    assert!(f.service.begin("peer".into(), "Peer".into(), true).is_err());
+    assert!(f.service.retry().await.is_err());
+    drop(pause);
+    assert!(f.service.begin("peer".into(), "Peer".into(), false).is_ok());
+    assert!(f.service.inner.lock().unwrap().settings.enabled);
+}
+
 struct Fixture {
     service: Service,
     identity: Arc<Identity>,

@@ -6,17 +6,9 @@ Nobody 为开发者提供快捷键翻译、划词阅读和局域网文字／文�
 
 ## 下载
 
-仓库提供 **Build macOS installers** 工作流，推送到 GitHub 后可自动构建 Apple 芯片 Mac 安装包：
+优先从 [GitHub Releases](https://github.com/t0ken-ai/Nobody/releases/latest) 下载 `Nobody-<版本>-macOS-arm64.dmg` 或 `.zip`。正式发布页同时提供每版更新摘要、SHA-256 校验清单和应用内更新所用的签名包，无需登录即可下载安装包。
 
-1. 登录 GitHub，打开 [Actions → Build macOS installers](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml)。
-2. 选择所需提交对应的成功运行，在页面摘要点击下载链接，或在 **Artifacts** 下载 `Nobody-<版本>-macOS-arm64`。
-3. 解压外层构建产物 ZIP，得到 DMG、应用 ZIP 和 SHA-256 校验清单，再按下文安装。
-
-每次 `main` 分支提交、推送匹配应用版本的 `v*` 标签，或点击 **Run workflow** 都会构建。Actions 产物保留 30 天，下载需要登录 GitHub；长期公开分发可将这三个文件上传到 GitHub Release。工作流只生成构建产物，不自动创建或发布 Release。
-
-仓库创建／推送后需等待首次运行成功，才会有可下载的包。尚无成功构建时，可按开发指南从源码打包。
-
-相关行为见 [GitHub 构建产物下载说明](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts)。
+测试提交的构建产物仍位于 [Actions → Build macOS installers](https://github.com/t0ken-ai/Nobody/actions/workflows/macos-installers.yml)，保留 30 天，下载需登录 GitHub。推送匹配应用版本的 `v*` 标签会在构建成功后发布正式 Release；普通 `main` 提交只生成测试产物。
 
 ## 安装
 
@@ -27,6 +19,18 @@ Nobody 为开发者提供快捷键翻译、划词阅读和局域网文字／文�
 运行应用不需要 Node.js、Rust、Xcode 或另行安装 SQLCipher。应用最低系统版本声明为 macOS 13.0，Apple 系统翻译需要 macOS 15+；较旧系统需配置 LLM。macOS 13/14 和 Intel Mac 尚未完成实机验证。
 
 当前构建采用 ad-hoc 签名，尚未 Developer ID 签名或 Apple 公证。首次打开可能被 macOS 阻止，请在确认来源后自行按系统提示处理，不要关闭系统安全保护。
+
+## 自动更新
+
+0.1.1 是首个支持自动更新的版本。0.1.0 用户需要先手动安装一次；之后可从菜单栏或「偏好设置 → Nobody 更新」检查更新。
+
+- 启动 30 秒后检查，此后每 6 小时检查一次；可以关闭自动检查。
+- 提醒显示新版本、发布日期和该版本 Release 的更新摘要，可稍后提醒或跳过此版本；手动检查仍能找到跳过的版本。
+- 点击「更新并重启」后下载并校验签名及版本，再安装。翻译或局域网任务未结束时暂缓安装，请完成任务后重试。
+- 网络或签名检查失败时不安装；没有对应平台安装包时不会改用其他平台文件。
+- 当前正式更新包仅支持 macOS Apple 芯片。更新签名与 Apple Developer ID／公证是不同机制，辅助功能授权的升级行为仍需按系统提示处理。
+
+更新使用 GitHub 上的公开 Release，不需要用户提供 GitHub Token、LLM Key 或钥匙串授权。偏好、密钥和互传文件保留在原位置。
 
 ## 首次使用
 
@@ -55,4 +59,4 @@ Nobody 为开发者提供快捷键翻译、划词阅读和局域网文字／文�
 shasum -a 256 -c Nobody-<版本>-macOS-arm64.sha256
 ```
 
-清单包含 DMG 与 ZIP；只下载其中一个时，另一项会提示文件不存在，可单独计算已下载文件的 SHA-256 与清单对应项比对。
+清单包含 DMG、ZIP、签名更新包及更新清单；只下载其中部分文件时，其余项会提示文件不存在，可单独计算已下载文件的 SHA-256 与清单对应项比对。

@@ -25,8 +25,8 @@ npm run desktop
 ```sh
 # 生产前端
 npm run build
-# 当前平台的桌面安装包
-npm run bundle
+# 本地安装包（不产生正式签名更新包）
+npm run bundle -- --config '{"bundle":{"createUpdaterArtifacts":false}}'
 ```
 
 Tauri 输出位于 `src-tauri/target/release/bundle/`。macOS 的应用为其中的 `macos/Nobody.app`。
@@ -57,7 +57,10 @@ macOS 原生规则检查会编译生产 Swift 适配层，使用合成数据，�
 ```sh
 node scripts/test-selection-layout.mjs
 node scripts/test-translation-models.mjs
+node scripts/test-updater.mjs
 ```
+
+更新安装检查使用临时签名密钥、loopback 服务和一次性 `.app`，验证篡改包、错配版本被拒绝及正常安装，不操作已安装的 Nobody 或用户数据。
 
 可选实测需明确选择，不能用常规测试结果替代：
 
@@ -79,10 +82,11 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked live_zai_translation --
 在 Apple 芯片 Mac 完成依赖安装后运行：
 
 ```sh
-node scripts/package-release.mjs
+# 维护者的更新签名私钥路径；不要将私钥放进仓库
+TAURI_SIGNING_PRIVATE_KEY="$HOME/.translateme-release/nobody-updater.key" node scripts/package-release.mjs
 ```
 
-脚本执行 Release 构建、签名验证、DMG / ZIP 完整性检查，输出 `artifacts/releases/Nobody-<版本>-macOS-arm64.{dmg,zip,sha256}`。DMG 包含应用、Applications 链接及 [安装说明](release-macos.md)；不打包用户配置和密钥。该脚本仅支持 Apple 芯片，Windows 使用 `npm run bundle` 在 Windows 环境构建。
+脚本执行 Release 构建、签名验证、DMG / ZIP 完整性检查，输出 `artifacts/releases/Nobody-<版本>-macOS-arm64.{dmg,zip,sha256}`。DMG 包含应用、Applications 链接及 [安装说明](release-macos.md)；不打包用户配置和密钥。该脚本仅支持 Apple 芯片，同时生成 `.app.tar.gz`、`.sig`、`latest.json` 和发行说明。Windows 本地包请使用上面的不生成更新产物的构建命令。
 
 当前 macOS 配置使用 ad-hoc 签名。正式分发的 Developer ID 签名与 Apple 公证需另行配置；Release 优化不代表已经公证。
 
@@ -93,12 +97,16 @@ node scripts/package-release.mjs
 | 触发方式 | 结果 |
 | --- | --- |
 | 推送到 `main` | 构建该提交的安装包，上传 Actions artifact |
-| 推送 `v<版本>` 标签 | 校验标签与 `src-tauri/tauri.conf.json` 版本一致后构建 |
+| 推送 `v<版本>` 标签 | 校验版本后构建，完整上传所有文件后发布正式 Release |
 | Actions 页面点击 Run workflow | 构建选择的分支／标签 |
 
 工作流执行 TypeScript、Rust 测试和原生翻译规则检查，再构建并校验 DMG / ZIP。安装包和校验清单保留 30 天，成功运行的摘要提供下载链接。下载方式见 [安装说明](release-macos.md#下载)。
 
-此流程只有仓库读取权限，不需要额外配置 GitHub Token、API Key 或 Apple 签名密钥，也不会自动发布 Release。公开长期分发时，在所需版本对应的成功构建中取出 DMG、ZIP、SHA-256 三个文件，添加到该版本的 GitHub Release。
+构建任务只有仓库读取权限，更新签名使用 `TAURI_SIGNING_PRIVATE_KEY` 这个 Actions Secret（如私钥有密码，还需 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`）。独立发布任务才获得 `contents: write`，先上传到草稿，完整成功后发布；已发布版本不覆盖，修复应增加版本号。
+
+发布新版本时，同步 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 和 `src-tauri/tauri.conf.json`，并添加 `docs/releases/v<版本>.md`。此文件同时用作 Release 正文和 `latest.json` 中的 `notes`，客户端直接显示，避免摘要与版本脱节。确认检查通过后推送对应 `v<版本>` 标签。
+
+更新签名私钥仅由维护者保管，放在仓库外并备份，不能提交或分发。应用只包含公钥；使用 Tauri CLI 2.12+ 生成带版本约束的签名，客户端要求 `requireSignedVersion`，拒绝清单版本与签名版本不一致的包。签名不依赖系统钥匙串，也不等同于 Apple 公证。分叉项目发布自己的版本时，应替换端点、公钥和私钥。
 
 提交工作流后必须在实际仓库检查首次运行结果；本地打包成功不代表 GitHub 环境已经验证。仓库如禁用 Actions，需先由维护者启用。Runner 规格见 [GitHub 官方说明](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)。
 
@@ -111,6 +119,7 @@ node scripts/package-release.mjs
 | `src-tauri/src/selection.rs`、`popover.rs` | 自动划词规则、来源跟踪和浮窗位置 |
 | `src-tauri/src/translation.rs`、`document.rs` | 引擎请求、输出校验和技术文本保护 |
 | `src-tauri/src/config.rs`、`llm_store.rs`、`private_files.rs` | 配置、本地加密存储与文件权限 |
+| `src-tauri/src/updater.rs`、`src/updates.ts` | 更新检查、提醒、下载和验签；协调器提供安装前的空闲锁 |
 | `src-tauri/src/transfer/` | 独立的局域网发现、TLS 身份、信任、传输和记录 |
 | `src-tauri/src/platform/`、`native/macos/` | 系统取词、回填、应用身份、图标及原生翻译适配 |
 | `src-tauri/prompts/developer-translator.txt` | 默认的可编辑翻译角色与规则 |

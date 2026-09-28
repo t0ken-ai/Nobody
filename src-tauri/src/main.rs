@@ -10,6 +10,9 @@ mod private_files;
 mod selection;
 mod transfer;
 mod translation;
+mod updater;
+#[cfg(all(test, target_os = "macos"))]
+mod updater_tests;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -92,6 +95,27 @@ fn show_main_window(app: &tauri::AppHandle) {
         let _ = window.show();
         let _ = window.set_focus();
         let _ = window.emit("main-window-visible", true);
+    }
+}
+
+/// Coordinate restart at the app boundary, keeping the updater independent of
+/// translation/LAN internals. Failure drops both gates and resumes normal work.
+struct UpdateInstallLease {
+    app: tauri::AppHandle,
+    _transfer: Option<transfer::UpdatePause>,
+}
+impl Drop for UpdateInstallLease {
+    fn drop(&mut self) { self.app.state::<AppState>().busy.store(false, Ordering::SeqCst); }
+}
+/// Acquire both idle gates before exposing a restart lease; partial acquisition
+/// is undone if a transfer arrived while the updater was downloading.
+fn prepare_update_install(app: &tauri::AppHandle) -> Result<Box<dyn Send>, String> {
+    let state = app.state::<AppState>();
+    state.busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .map_err(|_| "翻译或设置保存尚未完成，请稍后再点击更新。")?;
+    match transfer::commands::pause_for_update(app) {
+        Ok(transfer) => Ok(Box::new(UpdateInstallLease { app: app.clone(), _transfer: transfer })),
+        Err(e) => { state.busy.store(false, Ordering::SeqCst); Err(e) }
     }
 }
 
@@ -603,6 +627,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -665,7 +690,8 @@ fn main() {
                 None::<&str>,
             )?;
             let quit = tauri::menu::MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = tauri::menu::Menu::with_items(app, &[&open, &open_transfer, &quit])?;
+            let check_update = tauri::menu::MenuItem::with_id(app, "check-update", "检查更新…", true, None::<&str>)?;
+            let menu = tauri::menu::Menu::with_items(app, &[&open, &open_transfer, &check_update, &quit])?;
             let tray = tauri::tray::TrayIconBuilder::with_id("main-tray");
             // macOS tints this alpha-only B mark for light/dark menu bars.
             // Its wider head gap is intentional at status-item size. Windows
@@ -693,6 +719,11 @@ fn main() {
                         show_main_window(app);
                     }
                     "quit" => app.exit(0),
+                    "check-update" => {
+                        show_main_window(app);
+                        let handle = app.clone();
+                        tauri::async_runtime::spawn(async move { let _ = updater::check(&handle, true).await; });
+                    }
                     _ => {}
                 })
                 .build(app)?;
@@ -714,6 +745,7 @@ fn main() {
             watch_selection(app.handle().clone());
             // LAN state and failures stay separate from translation state.
             transfer::commands::install(app.handle());
+            updater::install(app.handle(), prepare_update_install);
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -767,6 +799,11 @@ fn main() {
             drag_popover,
             dismiss_popover,
             resize_popover,
+            updater::get_update_state,
+            updater::check_for_updates,
+            updater::dismiss_update,
+            updater::set_automatic_updates,
+            updater::install_update,
             transfer::commands::get_transfer_state,
             transfer::commands::save_transfer_settings,
             transfer::commands::retry_transfer_service,

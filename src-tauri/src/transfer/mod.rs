@@ -73,6 +73,7 @@ struct Inner {
     peers: HashMap<String, Peer>,
     pending: HashMap<String, Pending>,
     active: HashMap<String, Active>,
+    update_paused: bool,
     runtime: Option<Runtime>,
     status: String,
     error: String,
@@ -102,6 +103,12 @@ pub struct TransferService {
     lifecycle: tokio::sync::Mutex<()>,
     events: EventSink,
     slots: Arc<Semaphore>,
+}
+/// Prevent new inbound/outbound reservations during installer replacement.
+/// Dropping after a failed install restores service without altering preferences.
+pub struct UpdatePause(Service);
+impl Drop for UpdatePause {
+    fn drop(&mut self) { self.0.inner.lock().unwrap().update_paused = false; }
 }
 /// Human-facing timestamps use milliseconds; pairing timeouts use monotonic
 /// Tokio timers so clock adjustments cannot keep untrusted connections alive.
@@ -168,6 +175,7 @@ impl TransferService {
                 peers: HashMap::new(),
                 pending: HashMap::new(),
                 active: HashMap::new(),
+                update_paused: false,
                 runtime: None,
                 status: "stopped".into(),
                 error: String::new(),
@@ -234,7 +242,7 @@ impl TransferService {
         let _lifecycle = self.lifecycle.lock().await;
         {
             let mut i = self.inner.lock().unwrap();
-            if !i.settings.enabled || i.runtime.is_some() {
+            if !i.settings.enabled || i.runtime.is_some() || i.update_paused {
                 return;
             }
             i.status = "starting".into();
@@ -304,6 +312,16 @@ impl TransferService {
         drop(i);
         self.emit("changed");
     }
+    /// Check and pause under the same lock used by begin(), closing the race
+    /// between an idle snapshot and a newly arriving file transfer.
+    pub fn pause_for_update(self: &Service) -> Result<UpdatePause, String> {
+        let mut i = self.inner.lock().unwrap();
+        if !i.active.is_empty() || i.status == "starting" || i.update_paused {
+            return Err("局域网互传仍有任务，请完成后再点击更新。".into());
+        }
+        i.update_paused = true;
+        Ok(UpdatePause(self.clone()))
+    }
     /// Apply independent settings atomically. Destination/name changes wait for
     /// current jobs; disabling is always available and immediately cancels them.
     pub async fn configure(
@@ -319,6 +337,7 @@ impl TransferService {
         }
         {
             let mut i = self.inner.lock().unwrap();
+            if i.update_paused { return Err("正在安装更新，请稍候。".into()); }
             if enabled && !i.active.is_empty() {
                 return Err("请先等待或取消当前传输，再修改互传设置。".into());
             }
@@ -341,8 +360,11 @@ impl TransferService {
     /// transfer as a side effect of the UI's reconnect action.
     pub async fn retry(self: &Service) -> Result<(), String> {
         let lifecycle = self.lifecycle.lock().await;
-        if !self.inner.lock().unwrap().active.is_empty() {
-            return Err("请等待或取消当前传输后再重新连接。".into());
+        {
+            let i = self.inner.lock().unwrap();
+            if !i.active.is_empty() || i.update_paused {
+                return Err("请等待或取消当前传输后再重新连接。".into());
+            }
         }
         self.stop();
         drop(lifecycle);
@@ -464,7 +486,7 @@ impl TransferService {
         incoming: bool,
     ) -> Result<(String, CancellationToken), String> {
         let mut i = self.inner.lock().unwrap();
-        if i.status != "running" || !i.settings.enabled {
+        if i.status != "running" || !i.settings.enabled || i.update_paused {
             return Err("局域网互传已关闭。".into());
         }
         if i.active.len() >= 8 {
